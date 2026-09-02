@@ -41,7 +41,10 @@ info "7zz:  $SEVENZZ"
 
 
 CXX=""
-for v in 15 14 13 12 11; do
+# Newest first. A fixed list goes stale every time GCC ships a major release,
+# and the failure is confusing: a box with only g++-16 installed under a
+# versioned name gets told it needs "g++ 11 or newer".
+for v in $(seq 30 -1 11); do
   if command -v "g++-$v" >/dev/null; then CXX="g++-$v"; CC="gcc-$v"; break; fi
 done
 if [[ -z "$CXX" ]] && command -v g++ >/dev/null; then
@@ -161,7 +164,7 @@ Comment=AI Notepad for meetings
 Exec=$INSTALL_DIR/granola.sh %U
 Icon=$INSTALL_DIR/granola-icon.png
 Terminal=false
-Categories=Office;Utility;
+Categories=Office;
 StartupWMClass=granola
 MimeType=x-scheme-handler/granola;
 EOF
