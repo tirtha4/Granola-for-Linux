@@ -62,15 +62,30 @@ info "Electron $EL_VER"
 
 step "Fetching the Linux Electron runtime"
 
+REL="https://github.com/electron/electron/releases/download/v$EL_VER"
 ZIP="$CACHE_DIR/electron-v$EL_VER-linux-x64.zip"
+SUMS="$CACHE_DIR/SHASUMS256-$EL_VER.txt"
+
+if [[ ! -f "$SUMS" ]]; then
+  curl -fsSL -o "$SUMS.part" "$REL/SHASUMS256.txt" \
+    || die "could not fetch Electron's checksum file"
+  mv "$SUMS.part" "$SUMS"
+fi
+
 if [[ ! -f "$ZIP" ]]; then
-  URL="https://github.com/electron/electron/releases/download/v$EL_VER/electron-v$EL_VER-linux-x64.zip"
-  info "downloading $URL"
-  curl -fL --progress-bar -o "$ZIP.part" "$URL" || die "download failed"
+  info "downloading $REL/$(basename "$ZIP")"
+  curl -fL --progress-bar -o "$ZIP.part" "$REL/$(basename "$ZIP")" || die "download failed"
   mv "$ZIP.part" "$ZIP"
 else
   info "using cached $(basename "$ZIP")"
 fi
+
+# Electron publishes SHASUMS256.txt with every release. Check it before we
+# unpack 100+ MB of unsigned binary into the install directory. This also
+# catches a cache entry left truncated by an interrupted earlier run.
+( cd "$CACHE_DIR" && awk -v f="*$(basename "$ZIP")" '$2==f' "$SUMS" | sha256sum -c --status - ) \
+  || { rm -f "$ZIP"; die "Electron runtime failed checksum verification (deleted; re-run to retry)"; }
+info "sha256 verified against electron/electron SHASUMS256.txt"
 
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
