@@ -7,13 +7,25 @@
 ## Run it
 
 1. Download the `.dmg` from [granola.ai/download](https://www.granola.ai/download)
-2. Install what you need: `sudo apt install g++-11 nodejs npm python3 curl make`
+2. Install what you need:
+   - Debian/Ubuntu: `sudo apt install g++-11 nodejs npm python3 curl make`
+   - Arch: `sudo pacman -S 7zip base-devel nodejs npm python curl`
+   - Fedora: `sudo dnf install p7zip gcc-c++ make nodejs npm python3 curl`
 3. Run `./granola-linux.sh "Granola - AI Notepad.dmg"`
 4. Open Granola from your app menu and sign in
 
 That is it. The script installs to `~/Applications/granola`, adds a desktop entry, registers the `granola://` sign-in handler, and tests the build before it tells you it worked. Run `./uninstall.sh` to undo it.
 
-Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer. Tested on Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) with Granola 7.452.1 and Electron 42.7.0.
+Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer.
+
+If your distro packages a modern `7zz` (Arch's `7zip`, for example), the script uses it and skips the download from 7-zip.org entirely. Only `p7zip`-era builds are too old — see step 1 under *Build it yourself*.
+
+Tested on:
+
+| Distro | Granola | Electron |
+|---|---|---|
+| Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) | 7.452.1 | 42.7.0 |
+| Arch (Omarchy, glibc 2.42, gcc 16) | 7.522.2 | 42.7.0 |
 
 ## What works
 
