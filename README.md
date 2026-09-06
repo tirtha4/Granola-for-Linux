@@ -23,6 +23,7 @@ Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newe
 | ✅ | Sign-in with Google, Microsoft, or SSO |
 | ✅ | Encrypted local database that survives restarts |
 | ✅ | Microphone recording |
+| ✅ | Chrome extension (speaker detection) | Granola's Google Meet extension talks to the app through a native messaging host (`com.granola.app`). The script registers that host in every installed Chromium-family browser profile and installs a small JS bridge in place of the macOS-only binary. |
 | ⚠️ | System audio capture is limited. The macOS build uses Core Audio to hear the other side of a call. On Linux the app falls back to a browser style capture path. |
 | ❌ | Apple Calendar (EventKit). Google and Microsoft calendars still work, since those run on the server. |
 | ❌ | Global hotkeys |
@@ -45,5 +46,6 @@ Four of those six fail with errors that do not point at the real cause. `granola
 
 - Nothing here gets around licensing or sign-in. You use your own account and the app talks to Granola's real servers. The only patch is a platform label that their API refuses to accept.
 - Granola's code belongs to Granola. Do not commit `app.asar` or the `.dmg`. The `.gitignore` covers both.
-- Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone.
+- The Chrome extension host is a 60-line JS bridge (`resources/native/<arch>/meet-consent-host`) that reproduces the wire protocol of Granola's compiled macOS `meet-consent-host`: it relays Chrome's length-prefixed JSON to the app's `/tmp/granola-meet-consent-*` control socket and back. The app only starts that socket after it finds the host file at exactly `resources/native/<arch>/meet-consent-host` (arch = the runtime's `process.arch`), so the bridge is installed there. Browsers only let an extension reach a host listed in the manifest's `allowed_origins`; if Granola ship another Chrome extension id, add it there and re-run the script.
+- Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone. Installed a new browser? Re-run it so the host manifest lands in its profile too.
 - `./uninstall.sh --purge` also removes the local notes cache and login.

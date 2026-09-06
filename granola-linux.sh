@@ -143,6 +143,150 @@ cp "$WORK/bs3/build/Release/better_sqlite3.node" \
    "$WORK/bs3/build/Release/test_extension.node" "$BS3/build/Release/"
 
 
+step "Installing the Chrome extension native messaging host"
+
+# Granola's Chrome extension ("AI notes for Google Meet", and the webcam/consent
+# companion) talks to the app through a native messaging host named
+# com.granola.app. On macOS the app registers that host by writing a manifest
+# into ~/Library/Application Support/...; its browser detection only looks at
+# macOS locations too, so on a swapped-in Linux runtime nothing ever gets
+# registered and the extension reports "native messaging host not found."
+#
+# The host itself is a tiny bridge with two well-defined half-protocols, both
+# readable out of app.asar:
+#
+#   Chrome <-> host  4-byte little-endian length prefix, then UTF-8 JSON
+#   host <-> app     newline-delimited JSON over a unix socket at
+#                    /tmp/granola-meet-consent-<sha256($HOME)[0:12]>.sock
+#
+# The app also insists the host file exists at resources/native/<arch>/
+# meet-consent-host (arch from the runtime's own process.arch) before it will
+# start its socket server at all, so this step is not optional. On a fresh run
+# of this script that directory was wiped with $INSTALL_DIR.
+NATIVE_ARCH="$(ELECTRON_RUN_AS_NODE=1 "$INSTALL_DIR/electron" -e 'process.stdout.write(process.arch)')"
+[[ -n "$NATIVE_ARCH" ]] || die "could not determine the runtime architecture"
+NATIVE_DIR="$INSTALL_DIR/resources/native/$NATIVE_ARCH"
+mkdir -p "$NATIVE_DIR"
+
+cat > "$NATIVE_DIR/meet-consent-host" <<'HOSTEOF'
+#!/usr/bin/env bash
+# Native messaging host entry point for Granola on Linux. Chrome spawns this
+# file directly; it runs the JS bridge with the Electron runtime we ship, in
+# plain node mode (ELECTRON_RUN_AS_NODE), so no system Node is required.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec env ELECTRON_RUN_AS_NODE=1 "$DIR/../../../electron" "$DIR/meet-consent-bridge.js" "$@"
+HOSTEOF
+
+cat > "$NATIVE_DIR/meet-consent-bridge.js" <<'BRIDGEEOF'
+#!/usr/bin/env node
+// Drop-in Linux replacement for Granola's compiled meet-consent-host binary.
+// It relays between Chrome and the app socket, both directions:
+//   stdin/stdout : 4-byte little-endian length + JSON (Chrome native messaging)
+//   unix socket  : newline-delimited JSON (the app's framing)
+'use strict';
+const os = require('os');
+const crypto = require('crypto');
+const net = require('net');
+
+// The app binds /tmp/granola-meet-consent-<sha256($HOME)[0:12]>.sock and also
+// listens on a legacy /tmp/granola-meet-consent.sock. GRANOLA_BRIDGE_SOCKET
+// overrides the candidates (used by the installer's smoke test).
+const hash = crypto.createHash('sha256').update(os.homedir()).digest('hex').slice(0, 12);
+const candidates = (process.env.GRANOLA_BRIDGE_SOCKET || '')
+  .split(':').filter(Boolean)
+  .concat([`/tmp/granola-meet-consent-${hash}.sock`, '/tmp/granola-meet-consent.sock']);
+
+let sock = null;
+let stdinBuf = Buffer.alloc(0);
+let socketBuf = Buffer.alloc(0);
+let pending = [];
+
+function toChrome(json) {
+  const body = Buffer.from(json, 'utf8');
+  const out = Buffer.alloc(4 + body.length);
+  out.writeUInt32LE(body.length, 0);
+  body.copy(out, 4);
+  process.stdout.write(out);
+}
+
+function stake(local) {
+  const s = net.createConnection(local);
+  s.on('connect', () => {
+    sock = s;
+    if (pending.length) {
+      const batch = pending; pending = [];
+      sock.write(Buffer.concat(batch));
+    }
+  });
+  s.on('data', (d) => {
+    socketBuf = Buffer.concat([socketBuf, d]);
+    let n;
+    while ((n = socketBuf.indexOf(0x0a)) >= 0) {
+      toChrome(socketBuf.subarray(0, n).toString('utf8'));
+      socketBuf = socketBuf.subarray(n + 1);
+    }
+  });
+  s.on('error', () => { if (sock === s) sock = null; s.destroy(); });
+  s.on('close', () => { if (sock === s) sock = null; });
+  return s;
+}
+
+let slot = 0;
+function connect() {
+  if (!sock) stake(candidates[slot++ % candidates.length]);
+}
+connect();
+setInterval(connect, 1500);
+
+process.stdin.on('data', (d) => {
+  stdinBuf = Buffer.concat([stdinBuf, d]);
+  while (stdinBuf.length >= 4) {
+    const len = stdinBuf.readUInt32LE(0);
+    if (len > 1048576) { stdinBuf = stdinBuf.subarray(4); continue; } // malformed frame, skip it
+    if (stdinBuf.length < 4 + len) break;
+    const body = stdinBuf.subarray(4, 4 + len);
+    stdinBuf = stdinBuf.subarray(4 + len);
+    const line = Buffer.concat([body, Buffer.from([0x0a])]);
+    if (sock) sock.write(line); else pending.push(line);
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+BRIDGEEOF
+chmod +x "$NATIVE_DIR/meet-consent-host"
+
+# Register com.granola.app in every browser profile that exists here. Chrome
+# requires the manifest filename to match the "name" field and `path` to be
+# absolute. Allowed origins mirror the extension ids the app itself uses.
+MANIFEST="$(cat <<EOF
+{
+  "name": "com.granola.app",
+  "description": "Granola meeting notes - consent messaging",
+  "path": "$NATIVE_DIR/meet-consent-host",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://opaadbjlebbbnmjjgdmdllingedoleml/",
+    "chrome-extension://ephifgbopdapgehlpnakaddgmmgcbmjp/",
+    "chrome-extension://fihphjchjdimokpleomddhnapnobdphn/"
+  ]
+}
+EOF
+)"
+registered=0
+for dir in \
+  google-chrome google-chrome-beta google-chrome-unstable \
+  chromium chromium-beta microsoft-edge microsoft-edge-dev \
+  BraveSoftware/Brave-Browser vivaldi opera Arc; do
+  base="$HOME/.config/$dir"
+  [[ -d "$base" ]] || continue
+  host_dir="$base/NativeMessagingHosts"
+  mkdir -p "$host_dir"
+  printf '%s\n' "$MANIFEST" > "$host_dir/com.granola.app.json"
+  info "registered host for $dir"
+  registered=$((registered + 1))
+done
+[[ "$registered" -gt 0 ]] || info "no browser profiles found under ~/.config (install the extension inside a browser, then re-run this script)"
+
+
 step "Installing launcher and desktop entry"
 
 cat > "$INSTALL_DIR/granola.sh" <<EOF
@@ -188,6 +332,77 @@ ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" 
     db.close();
   " || die "smoke test failed, the app would not start"
 info "encrypted database + updateHook both work"
+
+
+step "Smoke-testing the native messaging bridge"
+
+# Stand in for the app's socket server, push a framed message through the host
+# in both directions, and confirm what comes out the other end.
+cat > "$WORK/bridge-smoke.js" <<'BRIDGE_TEST_EOF'
+'use strict';
+const net = require('net');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const sockPath = path.join(os.tmpdir(), `granola-socket-${process.pid}.sock`);
+const host = process.argv[2];
+let child = null;
+const fail = (m) => { console.error('    ' + m); child && child.kill(); process.exit(1); };
+const deadline = setTimeout(() => fail('bridge smoke test timed out'), 30000);
+
+const server = net.createServer((conn) => {
+  let buf = '';
+  conn.on('data', (d) => {
+    buf += d.toString();
+    let n;
+    while ((n = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, n); buf = buf.slice(n + 1);
+      let msg; try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.type !== 'smoke') continue;
+      clearTimeout(deadline);
+      conn.write(JSON.stringify({ type: 'smoke-reply', saw: msg.type }) + '\n');
+    }
+  });
+});
+server.listen(sockPath, () => {
+  child = spawn(host, [], {
+    env: Object.assign({}, process.env, { GRANOLA_BRIDGE_SOCKET: sockPath }),
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  let out = Buffer.alloc(0);
+  child.stdout.on('data', (d) => {
+    out = Buffer.concat([out, d]);
+    while (out.length >= 4) {
+      const len = out.readUInt32LE(0);
+      if (out.length < 4 + len) break;
+      const json = out.subarray(4, 4 + len).toString('utf8');
+      out = out.subarray(4 + len);
+      let reply; try { reply = JSON.parse(json); } catch { continue; }
+      if (reply.type === 'smoke-reply' && reply.saw === 'smoke') {
+        child.kill();
+        console.log('    chrome <-> bridge <-> app socket: both directions OK');
+        process.exit(0);
+      }
+    }
+  });
+  child.on('exit', (code) => { if (code && code !== 0) fail(`bridge exited early (${code})`); });
+  child.on('error', (e) => fail(`bridge failed to spawn: ${e.message}`));
+
+  const body = JSON.stringify({ type: 'smoke' });
+  const frame = Buffer.alloc(4 + Buffer.byteLength(body));
+  frame.writeUInt32LE(Buffer.byteLength(body), 0);
+  frame.write(body, 4);
+  child.stdin.write(frame);
+});
+server.on('error', (e) => fail(`test socket: ${e.message}`));
+process.on('exit', () => { try { fs.unlinkSync(sockPath); } catch {} });
+BRIDGE_TEST_EOF
+
+ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" \
+  "$INSTALL_DIR/electron" "$WORK/bridge-smoke.js" "$NATIVE_DIR/meet-consent-host" \
+  || die "native messaging host failed its smoke test"
 
 printf '\n\033[32m✓ Granola %s is installed.\033[0m\n' "$APP_VER"
 printf '  Launch it from your application menu, or run:\n    %s\n\n' "$INSTALL_DIR/granola.sh"
