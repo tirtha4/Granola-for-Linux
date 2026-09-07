@@ -116,6 +116,29 @@ print(f"    rewrote {total} platform fallback(s)")
 PYEOF
 
 
+step "Patching login-complete so a second account can finish signing in"
+
+# OAuth returns via granola://login-complete (or granola-dev:// when the app is
+# launched unpackaged). The renderer only accepts that callback on the
+# /login-in-progress route. Adding another account often stays on /login, so
+# the browser hands the URL back and the app ignores it.
+#
+# Force the route check true. Same-length in-place edit, same reason as above.
+python3 - "$INSTALL_DIR/resources/app.asar" <<'PYEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); data = p.read_bytes()
+old = b"if(!Jsn(n,{isLoginInProgressRoute:c,calendarError:e})){G(`info`,`login-complete-ignored-not-on-login-in-progress`"
+new = b"if(!Jsn(n,{isLoginInProgressRoute:1,calendarError:e})){G(`info`,`login-complete-ignored-not-on-login-in-progress`"
+n = data.count(old)
+if n == 0:
+    sys.exit("login-complete route guard not found. Granola's bundler output may have changed")
+if len(old) != len(new):
+    sys.exit("login-complete patch is not the same length as the original bytes")
+p.write_bytes(data.replace(old, new, 1))
+print(f"    rewrote {n} login-complete route guard(s)")
+PYEOF
+
+
 step "Rebuilding better-sqlite3-multiple-ciphers for Linux"
 
 # Granola ships a *patched* fork of better-sqlite3-multiple-ciphers: it adds an
@@ -163,12 +186,16 @@ Icon=$INSTALL_DIR/granola-icon.png
 Terminal=false
 Categories=Office;Utility;
 StartupWMClass=granola
-MimeType=x-scheme-handler/granola;
+MimeType=x-scheme-handler/granola;x-scheme-handler/granola-dev;
 EOF
 
 command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
 
-command -v xdg-mime >/dev/null && xdg-mime default "$(basename "$DESKTOP_FILE")" x-scheme-handler/granola 2>/dev/null || true
+if command -v xdg-mime >/dev/null; then
+  xdg-mime default "$(basename "$DESKTOP_FILE")" x-scheme-handler/granola 2>/dev/null || true
+  # Unpackaged Electron (electron /path/to/app.asar) registers granola-dev, not granola.
+  xdg-mime default "$(basename "$DESKTOP_FILE")" x-scheme-handler/granola-dev 2>/dev/null || true
+fi
 
 
 step "Smoke-testing the native module"
