@@ -205,7 +205,7 @@ let pending = [];
 function toChrome(json) {
   const body = Buffer.from(json, 'utf8');
   const out = Buffer.alloc(4 + body.length);
-  out.writeUInt32LE(body.length, 0);
+  out.writeUInt32LE(body.length, 0); // native byte order (little-endian on supported targets)
   body.copy(out, 4);
   process.stdout.write(out);
 }
@@ -247,8 +247,16 @@ setInterval(connect, 1500);
 process.stdin.on('data', (d) => {
   stdinBuf = Buffer.concat([stdinBuf, d]);
   while (stdinBuf.length >= 4) {
+    // Length prefix is 32-bit in the platform's native byte order; all
+    // supported targets (x86-64/arm64) are little-endian, hence readUInt32LE.
     const len = stdinBuf.readUInt32LE(0);
-    if (len > 1048576) { stdinBuf = stdinBuf.subarray(4); continue; } // malformed frame, skip it
+    // Chrome caps messages sent to a host at 64 MiB; 1 MiB is the limit in
+    // the host->Chrome direction only. A larger length means the stream is
+    // corrupt with no recoverable framing, so fail rather than misparse.
+    if (len > 64 * 1024 * 1024) {
+      process.stderr.write('meet-consent-host: invalid frame length ' + len + '\n');
+      process.exit(1);
+    }
     if (stdinBuf.length < 4 + len) break;
     const body = stdinBuf.subarray(4, 4 + len);
     stdinBuf = stdinBuf.subarray(4 + len);
