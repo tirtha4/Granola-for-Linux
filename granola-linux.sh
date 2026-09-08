@@ -367,7 +367,6 @@ const server = net.createServer((conn) => {
       const line = buf.slice(0, n); buf = buf.slice(n + 1);
       let msg; try { msg = JSON.parse(line); } catch { continue; }
       if (msg.type !== 'smoke') continue;
-      clearTimeout(deadline);
       conn.write(JSON.stringify({ type: 'smoke-reply', saw: msg.type }) + '\n');
     }
   });
@@ -387,6 +386,7 @@ server.listen(sockPath, () => {
       out = out.subarray(4 + len);
       let reply; try { reply = JSON.parse(json); } catch { continue; }
       if (reply.type === 'smoke-reply' && reply.saw === 'smoke') {
+        clearTimeout(deadline);
         child.kill();
         console.log('    chrome <-> bridge <-> app socket: both directions OK');
         process.exit(0);
