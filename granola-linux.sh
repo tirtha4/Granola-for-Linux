@@ -11,6 +11,7 @@ RES="Granola/Granola.app/Contents/Resources"
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1;36m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
+warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 
 [[ -n "$DMG" ]] || die "usage: $0 <path-to-granola.dmg>   (INSTALL_DIR=$INSTALL_DIR)"
 [[ -f "$DMG" ]] || die "no such file: $DMG"
@@ -286,19 +287,94 @@ MANIFEST="$(cat <<EOF
 EOF
 )"
 registered=0
-for dir in \
-  google-chrome google-chrome-beta google-chrome-unstable \
-  chromium chromium-beta microsoft-edge microsoft-edge-dev \
-  BraveSoftware/Brave-Browser vivaldi opera Arc; do
-  base="$HOME/.config/$dir"
-  [[ -d "$base" ]] || continue
-  host_dir="$base/NativeMessagingHosts"
-  mkdir -p "$host_dir"
-  printf '%s\n' "$MANIFEST" > "$host_dir/com.granola.app.json"
-  info "registered host for $dir"
+flatpak_ids=""
+snap_labels=""
+
+# Register $MANIFEST under a browser config dir if that dir exists. $1 is a
+# human label, $2 the absolute path to the config dir (NativeMessagingHosts is
+# appended). Returns 1 when the dir is absent so callers know whether the
+# browser was actually found there.
+register_host() {
+  local label="$1" base="$2"
+  [[ -d "$base" ]] || return 1
+  mkdir -p "$base/NativeMessagingHosts"
+  printf '%s\n' "$MANIFEST" > "$base/NativeMessagingHosts/com.granola.app.json"
+  info "registered host for $label"
   registered=$((registered + 1))
-done
-[[ "$registered" -gt 0 ]] || info "no browser profiles found under ~/.config (install the extension inside a browser, then re-run this script)"
+  return 0
+}
+
+# Chromium-family products, one row per entry:  label | config dir | snap |
+# flatpak id. A blank snap/flatpak column means that product ships no package
+# of that kind (Arc is omitted: it has no Linux build).
+#
+# Beyond the classic ~/.config/<dir> location the sandboxed packaging that the
+# big distros default to is covered too:
+#   snap    -> ~/snap/<name>/current/.config/<dir>   browsers get a per-snap HOME
+#   flatpak -> ~/.var/app/<id>/config/<dir>          flatpak HOME + XDG_CONFIG_HOME
+# Both confine the browser, so a manifest alone is not enough: see the notes
+# and sandbox overrides below.
+while IFS='|' read -r label cdir snap flatpak; do
+  [[ -z "$label" ]] && continue
+
+  register_host "$label" "$HOME/.config/$cdir" || true
+
+  if [[ -n "$snap" ]] && register_host "$label (snap)" "$HOME/snap/$snap/current/.config/$cdir"; then
+    snap_labels+="$label "
+  fi
+
+  if [[ -n "$flatpak" ]] && register_host "$label (flatpak)" "$HOME/.var/app/$flatpak/config/$cdir"; then
+    flatpak_ids+="$flatpak "
+  fi
+done <<'EOF'
+google-chrome|google-chrome|chrome|com.google.Chrome
+google-chrome-beta|google-chrome-beta||com.google.ChromeBeta
+google-chrome-unstable|google-chrome-unstable||com.google.ChromeDev
+chromium|chromium|chromium|org.chromium.Chromium
+chromium-browser|chromium-browser||
+chromium-beta|chromium-beta||
+microsoft-edge|microsoft-edge|microsoft-edge|com.microsoft.Edge
+microsoft-edge-beta|microsoft-edge-beta||com.microsoft.EdgeBeta
+microsoft-edge-dev|microsoft-edge-dev||com.microsoft.EdgeDev
+brave-browser|BraveSoftware/Brave-Browser|brave|com.brave.Browser
+vivaldi|vivaldi||com.vivaldi.Vivaldi
+opera|opera||com.opera.Opera
+EOF
+
+# Snap browsers are strictly confined: their mount namespace rewrites HOME and
+# /tmp, and AppArmor generally blocks them from exec'ing a host binary outside
+# the snap. The manifest above at least lets the extension find the host, and
+# on Ubuntu 22.04+ a patched XDG desktop portal can mediate launching it, but
+# that is distro-specific and has regressed before. Say so instead of implying
+# registration == working.
+if [[ -n "$snap_labels" ]]; then
+  warn "snap browsers found (${snap_labels% }): the snap sandbox limits them."
+  warn "  A strictly confined snap may refuse to launch a host binary under"
+  warn "  $INSTALL_DIR and gives it a private /tmp. Use an unsandboxed build"
+  warn "  (Google Chrome .deb, a distro chromium .deb, or a tarball/AppImage)"
+  warn "  for the most reliable speaker detection."
+fi
+
+# Flatpak browsers are sandboxed the same way, so the manifest path alone is
+# not enough. The browser needs filesystem access to $INSTALL_DIR to exec the
+# host, and host /tmp must be shared or Granola's control socket
+# (/tmp/granola-meet-consent-*.sock) is out of reach. Grant both, best-effort,
+# and say how to undo.
+if [[ -n "$flatpak_ids" ]]; then
+  for id in $flatpak_ids; do
+    if command -v flatpak >/dev/null \
+        && flatpak override --user --filesystem="$INSTALL_DIR" --filesystem=/tmp "$id" 2>/dev/null; then
+      info "flatpak $id: granted filesystem access to $INSTALL_DIR and to host /tmp"
+    else
+      info "flatpak $id: grant access manually so the host is reachable:"
+      info "  flatpak override --user --filesystem=$INSTALL_DIR --filesystem=/tmp $id"
+    fi
+  done
+  warn "flatpak browsers are sandboxed; sharing host /tmp weakens that sandbox."
+  warn "  Undo with: flatpak override --user --nofilesystem=/tmp --nofilesystem=$INSTALL_DIR <app-id>"
+fi
+
+[[ "$registered" -gt 0 ]] || info "no Chromium-family browser profiles found under ~/.config, ~/snap, or ~/.var/app (install the extension inside a browser, then re-run this script; Granola's extension is Chrome-only, Firefox is not supported)"
 
 
 step "Installing launcher and desktop entry"

@@ -23,7 +23,7 @@ Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newe
 | ✅ | Sign-in with Google, Microsoft, or SSO |
 | ✅ | Encrypted local database that survives restarts |
 | ✅ | Microphone recording |
-| ✅ | Chrome extension (speaker detection) | Granola's Google Meet extension talks to the app through a native messaging host (`com.granola.app`). The script registers that host in every installed Chromium-family browser profile and installs a small JS bridge in place of the macOS-only binary. |
+| ✅ | Chrome extension (speaker detection) | Granola's Google Meet extension talks to the app through a native messaging host (`com.granola.app`). The script registers that host in every installed Chromium-family browser profile — native `~/.config/...`, snap (`~/snap/chromium/current/.config/...`), and flatpak (`~/.var/app/<id>/config/...`) — and installs a small JS bridge in place of the macOS-only binary. Flatpak browsers are given the `flatpak override` filesystem access they need to launch the host; snap browsers are sandboxed more tightly, so an unsandboxed build (a `.deb` or tarball of Chrome/Chromium/Brave/Edge) is the most reliable option. |
 | ⚠️ | System audio capture is limited. The macOS build uses Core Audio to hear the other side of a call. On Linux the app falls back to a browser style capture path. |
 | ❌ | Apple Calendar (EventKit). Google and Microsoft calendars still work, since those run on the server. |
 | ❌ | Global hotkeys |
