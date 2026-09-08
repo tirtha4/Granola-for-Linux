@@ -197,6 +197,7 @@ const candidates = (process.env.GRANOLA_BRIDGE_SOCKET || '')
   .concat([`/tmp/granola-meet-consent-${hash}.sock`, '/tmp/granola-meet-consent.sock']);
 
 let sock = null;
+let connecting = false;
 let stdinBuf = Buffer.alloc(0);
 let socketBuf = Buffer.alloc(0);
 let pending = [];
@@ -212,6 +213,8 @@ function toChrome(json) {
 function stake(local) {
   const s = net.createConnection(local);
   s.on('connect', () => {
+    connecting = false;
+    if (sock && sock !== s) { s.destroy(); return; }
     sock = s;
     if (pending.length) {
       const batch = pending; pending = [];
@@ -226,14 +229,17 @@ function stake(local) {
       socketBuf = socketBuf.subarray(n + 1);
     }
   });
-  s.on('error', () => { if (sock === s) sock = null; s.destroy(); });
-  s.on('close', () => { if (sock === s) sock = null; });
+  s.on('error', () => { connecting = false; if (sock === s) sock = null; s.destroy(); });
+  s.on('close', () => { connecting = false; if (sock === s) sock = null; });
   return s;
 }
 
 let slot = 0;
 function connect() {
-  if (!sock) stake(candidates[slot++ % candidates.length]);
+  if (!sock && !connecting) {
+    connecting = true;
+    stake(candidates[slot++ % candidates.length]);
+  }
 }
 connect();
 setInterval(connect, 1500);
