@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Native messaging host entry point for Granola on Linux. Chrome spawns this
+# file directly; it runs the JS bridge with the Electron runtime we ship, in
+# plain node mode (ELECTRON_RUN_AS_NODE), so no system Node is required.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec env ELECTRON_RUN_AS_NODE=1 "$DIR/../../../electron" "$DIR/meet-consent-bridge.js" "$@"
