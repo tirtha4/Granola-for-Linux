@@ -77,7 +77,18 @@ fi
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 "$SEVENZZ" x "$ZIP" -o"$INSTALL_DIR" -y >/dev/null
-chmod +x "$INSTALL_DIR/electron"
+
+# Rename the runtime binary away from "electron": that is how Electron tells a
+# stock/dev build from a packaged one (app.isPackaged). Granola's consent host
+# lookup keys off isPackaged -- packaged builds resolve to
+# resources/native-host/meet-consent-host (which is exactly the layout Granola
+# ships in the macOS .dmg), while dev builds resolve to
+# resources/app.asar/native/<arch>/meet-consent-host, a path that sits inside
+# the asar archive and can never exist on disk. Since app update 7.529.x
+# dropped dirname() from that path, speaker detection stopped working; making
+# the runtime appear packaged restores it without touching app code.
+mv "$INSTALL_DIR/electron" "$INSTALL_DIR/granola"
+chmod +x "$INSTALL_DIR/granola"
 rm -f "$INSTALL_DIR/resources/default_app.asar"   # the "welcome to Electron" demo
 
 
@@ -161,13 +172,13 @@ step "Installing the Chrome extension native messaging host"
 #   host <-> app     newline-delimited JSON over a unix socket at
 #                    /tmp/granola-meet-consent-<sha256($HOME)[0:12]>.sock
 #
-# The app also insists the host file exists at resources/native/<arch>/
-# meet-consent-host (arch from the runtime's own process.arch) before it will
-# start its socket server at all, so this step is not optional. On a fresh run
-# of this script that directory was wiped with $INSTALL_DIR.
-NATIVE_ARCH="$(ELECTRON_RUN_AS_NODE=1 "$INSTALL_DIR/electron" -e 'process.stdout.write(process.arch)')"
-[[ -n "$NATIVE_ARCH" ]] || die "could not determine the runtime architecture"
-NATIVE_DIR="$INSTALL_DIR/resources/native/$NATIVE_ARCH"
+# The app also insists the host file exists at resources/native-host/
+# meet-consent-host -- the packaged-app layout, exactly where the macOS .dmg
+# ships it -- before it will start its socket server at all. Because the
+# runtime binary above was renamed (isPackaged=true), the packaged branch of
+# that lookup is what runs, so this step is not optional. On a fresh run of
+# this script that directory was wiped with $INSTALL_DIR.
+NATIVE_DIR="$INSTALL_DIR/resources/native-host"
 mkdir -p "$NATIVE_DIR"
 
 cp "$SCRIPT_DIR/native/meet-consent-host" "$SCRIPT_DIR/native/meet-consent-bridge.js" "$NATIVE_DIR/"
@@ -286,7 +297,7 @@ step "Installing launcher and desktop entry"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+exec "\$DIR/granola" --ozone-platform-hint=auto "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
@@ -312,7 +323,7 @@ command -v xdg-mime >/dev/null && xdg-mime default "$(basename "$DESKTOP_FILE")"
 step "Smoke-testing the native module"
 
 ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" \
-  "$INSTALL_DIR/electron" -e "
+  "$INSTALL_DIR/granola" -e "
     const Database = require('$BS3/lib/index.js');
     const db = new Database('$WORK/smoke.db');
     db.pragma(\"cipher='sqlcipher'\");
@@ -395,7 +406,7 @@ process.on('exit', () => { try { fs.unlinkSync(sockPath); } catch {} });
 BRIDGE_TEST_EOF
 
 ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" \
-  "$INSTALL_DIR/electron" "$WORK/bridge-smoke.js" "$NATIVE_DIR/meet-consent-host" \
+  "$INSTALL_DIR/granola" "$WORK/bridge-smoke.js" "$NATIVE_DIR/meet-consent-host" \
   || die "native messaging host failed its smoke test"
 
 printf '\n\033[32m✓ Granola %s is installed.\033[0m\n' "$APP_VER"
