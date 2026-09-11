@@ -23,6 +23,7 @@ Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newe
 | ✅ | Sign-in with Google, Microsoft, or SSO |
 | ✅ | Encrypted local database that survives restarts |
 | ✅ | Microphone recording |
+| ✅ | Chrome extension (speaker detection) | Granola's Google Meet extension talks to the app through a native messaging host (`com.granola.app`). The script registers that host in every installed Chromium-family browser profile — native `~/.config/...`, snap (`~/snap/chromium/current/.config/...`), and flatpak (`~/.var/app/<id>/config/...`) — and installs a small JS bridge in place of the macOS-only binary. Flatpak browsers are given the `flatpak override` filesystem access they need to launch the host; snap browsers are sandboxed more tightly, so an unsandboxed build (a `.deb` or tarball of Chrome/Chromium/Brave/Edge) is the most reliable option. |
 | ⚠️ | System audio capture is limited. The macOS build uses Core Audio to hear the other side of a call. On Linux the app falls back to a browser style capture path. |
 | ❌ | Apple Calendar (EventKit). Google and Microsoft calendars still work, since those run on the server. |
 | ❌ | Global hotkeys |
@@ -34,7 +35,7 @@ If you would rather not run the script, the conversion takes six steps:
 
 1. Extract the `.dmg` with a modern `7zz`. The `p7zip` in most distros cannot read its LZFSE compression.
 2. Read the Electron version out of `Electron Framework.framework/.../Info.plist`, then download that exact Linux build.
-3. Unzip the Linux runtime into your install folder and delete `resources/default_app.asar`.
+3. Unzip the Linux runtime into your install folder, delete `resources/default_app.asar`, and rename the `electron` binary anything else (e.g. `granola`). The rename makes Electron report `app.isPackaged` — and Granola looks for its native host in a *different* place in dev mode (`resources/app.asar/native/<arch>/`, a path inside the archive that can never exist) than it does packaged (`resources/native-host/`).
 4. Copy `app.asar`, `app.asar.unpacked`, and `icons/` from the bundle into the runtime's `resources/`. Skip every Mac binary, since they all sit behind `darwin` checks.
 5. Patch the platform string inside `app.asar` so it reports `Windows`. Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this.
 6. Rebuild `better-sqlite3-multiple-ciphers` from the C++ source inside `app.asar.unpacked` using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has.
@@ -45,5 +46,6 @@ Four of those six fail with errors that do not point at the real cause. `granola
 
 - Nothing here gets around licensing or sign-in. You use your own account and the app talks to Granola's real servers. The only patch is a platform label that their API refuses to accept.
 - Granola's code belongs to Granola. Do not commit `app.asar` or the `.dmg`. The `.gitignore` covers both.
-- Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone.
+- The Chrome extension host is a 60-line JS bridge (`resources/native-host/meet-consent-host`) that reproduces the wire protocol of Granola's compiled macOS `meet-consent-host`: it relays Chrome's length-prefixed JSON to the app's `/tmp/granola-meet-consent-*` control socket and back. The app only starts that socket after it finds the host file at exactly `resources/native-host/meet-consent-host` (the packaged-app layout, matching the macOS `.dmg`), so the bridge is installed there. Browsers only let an extension reach a host listed in the manifest's `allowed_origins`; if Granola ship another Chrome extension id, add it there and re-run the script.
+- Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone. Installed a new browser? Re-run it so the host manifest lands in its profile too.
 - `./uninstall.sh --purge` also removes the local notes cache and login.
