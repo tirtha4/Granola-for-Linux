@@ -4,16 +4,40 @@
 
 ![Granola running on Linux](docs/screenshot.png)
 
-## Run it
+## Arch / Omarchy
+
+This is a pacman package. It pulls the official macOS `.dmg`, swaps in Linux Electron, and installs to `/usr/lib/granola`.
+
+```bash
+cd packaging/arch
+makepkg -si
+```
+
+Launch from the app menu (Omarchy: Super+Space, type Granola). Remove with `sudo pacman -Rns granola`.
+
+There is also an AUR package of the same name, built the same way. On Omarchy: `omarchy pkg aur add granola`. It can lag a release behind this repo.
+
+## Other distros
 
 1. Download the `.dmg` from [granola.ai/download](https://www.granola.ai/download)
-2. Install what you need: `sudo apt install g++-11 nodejs npm python3 curl make`
+2. Install what you need:
+   - Debian/Ubuntu: `sudo apt install g++-11 nodejs npm python3 curl make`
+   - Fedora: `sudo dnf install gcc-c++ make nodejs npm python3 curl`
 3. Run `./granola-linux.sh "Granola - AI Notepad.dmg"`
 4. Open Granola from your app menu and sign in
 
-That is it. The script installs to `~/Applications/granola`, adds a desktop entry, registers the `granola://` sign-in handler, and tests the build before it tells you it worked. Run `./uninstall.sh` to undo it.
+The script installs to `~/Applications/granola`, adds a desktop entry, registers the `granola://` sign-in handler, and tests the build before it tells you it worked. Run `./uninstall.sh` to undo it. Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer.
 
-Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer. Tested on Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) with Granola 7.452.1 and Electron 42.7.0.
+If your distro packages a modern `7zz` (Arch's `7zip`, for example), the script uses it and skips the download from 7-zip.org. Only `p7zip`-era builds are too old — see step 1 under *Build it yourself*.
+
+The launcher asks Electron for Wayland when the session is Wayland, and turns on PipeWire capture so the in-app meeting picker can see screens and system audio through `xdg-desktop-portal`. On Hyprland/Omarchy that portal is already there.
+
+Tested on:
+
+| Distro | Granola | Electron |
+|---|---|---|
+| Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) | 7.452.1 | 42.7.0 |
+| Omarchy (Arch, glibc 2.44, gcc 16, electron44 44.3.0) | 7.568.0 | 44.3.0 |
 
 ## What works
 

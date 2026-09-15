@@ -1,0 +1,6 @@
+.cache/
+*.dmg
+*.asar
+app.asar.unpacked/
+*.node
+*.part

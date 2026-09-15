@@ -12,8 +12,23 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1;36m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 
+install_hint() {
+  if command -v omarchy >/dev/null && [[ -r /etc/os-release ]] && grep -q '^ID=omarchy' /etc/os-release; then
+    echo "omarchy pkg add gcc python make curl 7zip npm"
+  elif command -v pacman >/dev/null; then
+    echo "sudo pacman -S --needed gcc python make curl 7zip npm"
+  elif command -v apt >/dev/null; then
+    echo "sudo apt install g++-11 nodejs npm python3 curl make"
+  elif command -v dnf >/dev/null; then
+    echo "sudo dnf install gcc-c++ make nodejs npm python3 curl"
+  else
+    echo "install g++ 11+, node, npm, python3, curl, and make"
+  fi
+}
+
 [[ -n "$DMG" ]] || die "usage: $0 <path-to-granola.dmg>   (INSTALL_DIR=$INSTALL_DIR)"
 [[ -f "$DMG" ]] || die "no such file: $DMG"
+[[ "$(uname -m)" == "x86_64" ]] || die "need x86-64 (got $(uname -m))"
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$CACHE_DIR"
@@ -22,7 +37,7 @@ mkdir -p "$CACHE_DIR"
 step "Checking prerequisites"
 
 for cmd in node npm python3 curl make; do
-  command -v "$cmd" >/dev/null || die "'$cmd' not found. Please install it."
+  command -v "$cmd" >/dev/null || die "'$cmd' not found. Try: $(install_hint)"
 done
 
 
@@ -32,7 +47,7 @@ if [[ -z "$SEVENZZ" ]]; then
   if [[ ! -x "$SEVENZZ" ]]; then
     info "7zz not found, downloading the official static build (LZFSE support)"
     curl -fsSL -o "$WORK/7z.tar.xz" https://www.7-zip.org/a/7z2501-linux-x64.tar.xz \
-      || die "could not download 7zz; install it manually and re-run"
+      || die "could not download 7zz; install it (Arch/Omarchy: 7zip) and re-run"
     tar xf "$WORK/7z.tar.xz" -C "$CACHE_DIR" 7zz
     chmod +x "$SEVENZZ"
   fi
@@ -41,13 +56,16 @@ info "7zz:  $SEVENZZ"
 
 
 CXX=""
-for v in 15 14 13 12 11; do
+# Newest first. A fixed list goes stale every time GCC ships a major release,
+# and the failure is confusing: a box with only g++-16 installed under a
+# versioned name gets told it needs "g++ 11 or newer".
+for v in $(seq 30 -1 11); do
   if command -v "g++-$v" >/dev/null; then CXX="g++-$v"; CC="gcc-$v"; break; fi
 done
 if [[ -z "$CXX" ]] && command -v g++ >/dev/null; then
   if [[ "$(g++ -dumpversion | cut -d. -f1)" -ge 11 ]]; then CXX=g++; CC=gcc; fi
 fi
-[[ -n "$CXX" ]] || die "need g++ 11 or newer (Electron 42 headers require C++20). Try: sudo apt install g++-11"
+[[ -n "$CXX" ]] || die "need g++ 11 or newer (Electron headers require C++20). Try: $(install_hint)"
 info "compiler: $CXX ($($CXX -dumpversion))"
 
 
@@ -62,15 +80,30 @@ info "Electron $EL_VER"
 
 step "Fetching the Linux Electron runtime"
 
+REL="https://github.com/electron/electron/releases/download/v$EL_VER"
 ZIP="$CACHE_DIR/electron-v$EL_VER-linux-x64.zip"
+SUMS="$CACHE_DIR/SHASUMS256-$EL_VER.txt"
+
+if [[ ! -f "$SUMS" ]]; then
+  curl -fsSL -o "$SUMS.part" "$REL/SHASUMS256.txt" \
+    || die "could not fetch Electron's checksum file"
+  mv "$SUMS.part" "$SUMS"
+fi
+
 if [[ ! -f "$ZIP" ]]; then
-  URL="https://github.com/electron/electron/releases/download/v$EL_VER/electron-v$EL_VER-linux-x64.zip"
-  info "downloading $URL"
-  curl -fL --progress-bar -o "$ZIP.part" "$URL" || die "download failed"
+  info "downloading $REL/$(basename "$ZIP")"
+  curl -fL --progress-bar -o "$ZIP.part" "$REL/$(basename "$ZIP")" || die "download failed"
   mv "$ZIP.part" "$ZIP"
 else
   info "using cached $(basename "$ZIP")"
 fi
+
+# Electron publishes SHASUMS256.txt with every release. Check it before we
+# unpack 100+ MB of unsigned binary into the install directory. This also
+# catches a cache entry left truncated by an interrupted earlier run.
+( cd "$CACHE_DIR" && awk -v f="*$(basename "$ZIP")" '$2==f' "$SUMS" | sha256sum -c --status - ) \
+  || { rm -f "$ZIP"; die "Electron runtime failed checksum verification (deleted; re-run to retry)"; }
+info "sha256 verified against electron/electron SHASUMS256.txt"
 
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -86,7 +119,12 @@ step "Extracting the app payload"
   -o"$WORK/dmg" -y >/dev/null
 cp -r "$WORK/dmg/$RES/app.asar" "$WORK/dmg/$RES/app.asar.unpacked" \
       "$WORK/dmg/$RES/icons" "$INSTALL_DIR/resources/"
-cp "$INSTALL_DIR/resources/icons/icon.png" "$INSTALL_DIR/granola-icon.png"
+# icon.png is a black "g|" wordmark on a transparent canvas — invisible
+# on a dark launcher and not the app icon. mac-icon.png is the lime
+# squircle Granola ships on macOS.
+ICON_SRC="$INSTALL_DIR/resources/icons/mac-icon.png"
+[[ -f "$ICON_SRC" ]] || ICON_SRC="$INSTALL_DIR/resources/icons/icon.png"
+cp "$ICON_SRC" "$INSTALL_DIR/granola-icon.png"
 "$SEVENZZ" e "$DMG" "Granola/Granola.app/Contents/Info.plist" -o"$WORK/appinfo" -y >/dev/null 2>&1 || true
 APP_VER="$(grep -A1 CFBundleShortVersionString "$WORK/appinfo/Info.plist" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 info "Granola ${APP_VER:-?} payload installed"
@@ -145,28 +183,36 @@ cp "$WORK/bs3/build/Release/better_sqlite3.node" \
 
 step "Installing launcher and desktop entry"
 
+# ozone-platform-hint=auto picks Wayland on Hyprland/Omarchy and X11 elsewhere.
+# WebRTCPipeWireCapturer is the Linux stand-in for the macOS Core Audio tap:
+# without it, meeting capture falls back to a browser-style picker that does
+# not work on a lot of compositors.
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+exec "\$DIR/electron" --ozone-platform-hint=auto --enable-features=WebRTCPipeWireCapturer "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
 mkdir -p "$(dirname "$DESKTOP_FILE")"
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
+Version=1.0
 Type=Application
 Name=Granola
 Comment=AI Notepad for meetings
 Exec=$INSTALL_DIR/granola.sh %U
 Icon=$INSTALL_DIR/granola-icon.png
 Terminal=false
-Categories=Office;Utility;
+Categories=Office;
+Keywords=meetings;notes;transcript;notepad;
+StartupNotify=true
 StartupWMClass=granola
 MimeType=x-scheme-handler/granola;
 EOF
 
 command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
+command -v desktop-file-validate >/dev/null && desktop-file-validate "$DESKTOP_FILE" 2>/dev/null || true
 
 command -v xdg-mime >/dev/null && xdg-mime default "$(basename "$DESKTOP_FILE")" x-scheme-handler/granola 2>/dev/null || true
 
