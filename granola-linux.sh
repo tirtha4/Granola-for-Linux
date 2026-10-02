@@ -2,6 +2,12 @@
 
 set -euo pipefail
 
+case "$(uname -m)" in
+  x86_64)  EL_ARCH=x64;   SZ_ARCH=x64 ;;
+  aarch64) EL_ARCH=arm64; SZ_ARCH=arm64 ;;
+  *) die "unsupported arch $(uname -m)" ;;
+esac
+
 DMG="${1:-}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications/granola}"
 CACHE_DIR="${CACHE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.cache}"
@@ -31,7 +37,7 @@ if [[ -z "$SEVENZZ" ]]; then
   SEVENZZ="$CACHE_DIR/7zz"
   if [[ ! -x "$SEVENZZ" ]]; then
     info "7zz not found, downloading the official static build (LZFSE support)"
-    curl -fsSL -o "$WORK/7z.tar.xz" https://www.7-zip.org/a/7z2501-linux-x64.tar.xz \
+    curl -fsSL -o "$WORK/7z.tar.xz" https://www.7-zip.org/a/7z2501-linux-${SZ_ARCH}.tar.xz \
       || die "could not download 7zz; install it manually and re-run"
     tar xf "$WORK/7z.tar.xz" -C "$CACHE_DIR" 7zz
     chmod +x "$SEVENZZ"
@@ -62,9 +68,9 @@ info "Electron $EL_VER"
 
 step "Fetching the Linux Electron runtime"
 
-ZIP="$CACHE_DIR/electron-v$EL_VER-linux-x64.zip"
+ZIP="$CACHE_DIR/electron-v$EL_VER-linux-${EL_ARCH}.zip"
 if [[ ! -f "$ZIP" ]]; then
-  URL="https://github.com/electron/electron/releases/download/v$EL_VER/electron-v$EL_VER-linux-x64.zip"
+  URL="https://github.com/electron/electron/releases/download/v$EL_VER/electron-v$EL_VER-linux-${EL_ARCH}.zip"
   info "downloading $URL"
   curl -fL --progress-bar -o "$ZIP.part" "$URL" || die "download failed"
   mv "$ZIP.part" "$ZIP"
@@ -134,8 +140,8 @@ cp -r "$BS3" "$WORK/bs3"
     && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch binding.gyp from npm"
 cp "$WORK/package/binding.gyp" "$WORK/bs3/"
 
-( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp rebuild --release \
-    --runtime=electron --target="$EL_VER" --arch=x64 \
+( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp@11 rebuild --release \
+    --runtime=electron --target="$EL_VER" --arch="$EL_ARCH" \
     --dist-url=https://electronjs.org/headers ) >"$WORK/build.log" 2>&1 \
   || { tail -30 "$WORK/build.log"; die "native build failed (full log: $WORK/build.log)"; }
 
