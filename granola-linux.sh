@@ -189,5 +189,35 @@ ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" 
   " || die "smoke test failed, the app would not start"
 info "encrypted database + updateHook both work"
 
+
+step "Unpacking app and stubbing macOS-only native modules"
+
+RESDIR="$INSTALL_DIR/resources"
+( cd "$RESDIR" && npx --yes @electron/asar@3 extract app.asar app ) \
+  || die "could not extract app.asar"
+rm -rf "$RESDIR/app.asar" "$RESDIR/app.asar.unpacked"
+
+# electron-click-drag-plugin is a native macos addon with no Linux build in the .dmg;
+# replace it with a no-op that accepts any function name so granola still starts. Linux doesn't
+# seem to need it.
+# It's also new, so only do this on granola DMGs that are new-enough to contain it 
+DRAG="$RESDIR/app/node_modules/electron-click-drag-plugin"
+if [[ -d "$DRAG" ]]; then
+  cat > "$DRAG/index.js" <<'EOF'
+// Linux stub: the real module is a macOS native addon.
+const noop = () => {};
+module.exports = new Proxy({}, {
+  get(_, key) {
+    if (typeof key === 'symbol' || key === 'then' || key === '__esModule') return undefined;
+    if (key === 'default') return module.exports;
+    return noop;
+  },
+});
+EOF
+  info "stubbed electron-click-drag-plugin"
+fi
+
+
+
 printf '\n\033[32m✓ Granola %s is installed.\033[0m\n' "$APP_VER"
 printf '  Launch it from your application menu, or run:\n    %s\n\n' "$INSTALL_DIR/granola.sh"
