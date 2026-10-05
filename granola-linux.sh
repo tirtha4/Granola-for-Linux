@@ -134,7 +134,9 @@ cp -r "$BS3" "$WORK/bs3"
     && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch binding.gyp from npm"
 cp "$WORK/package/binding.gyp" "$WORK/bs3/"
 
-( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp rebuild --release \
+# Use npm exec, not npx: pnpm's npx shim mis-parses "node-gyp rebuild" and fails with
+# "You forgot to tell me what to run when the files changes!"
+( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npm exec --yes node-gyp -- rebuild --release \
     --runtime=electron --target="$EL_VER" --arch=x64 \
     --dist-url=https://electronjs.org/headers ) >"$WORK/build.log" 2>&1 \
   || { tail -30 "$WORK/build.log"; die "native build failed (full log: $WORK/build.log)"; }
