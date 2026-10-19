@@ -14,7 +14,7 @@ echo "  $DESKTOP_FILE"
 read -rp "Continue? [y/N] " reply
 [[ "$reply" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
 
-pkill -f "^$INSTALL_DIR/electron" 2>/dev/null || true
+pkill -f "^$INSTALL_DIR/(granola|electron) " 2>/dev/null || true
 sleep 1
 rm -rf "$INSTALL_DIR" "$DESKTOP_FILE"
 [[ "${1:-}" == "--purge" ]] && rm -rf "$DATA_DIR"

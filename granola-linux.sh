@@ -75,7 +75,12 @@ fi
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 "$SEVENZZ" x "$ZIP" -o"$INSTALL_DIR" -y >/dev/null
-chmod +x "$INSTALL_DIR/electron"
+# Electron sets app.isPackaged=false when its binary is named "electron". Granola
+# then runs in development mode: it installs React/Redux devtools, labels itself
+# "Not packaged", and resolves tray icons inside app.asar, where they do not
+# exist, so the tray shows no icon.
+mv "$INSTALL_DIR/electron" "$INSTALL_DIR/granola"
+chmod +x "$INSTALL_DIR/granola"
 rm -f "$INSTALL_DIR/resources/default_app.asar"   # the "welcome to Electron" demo
 
 
@@ -87,6 +92,51 @@ step "Extracting the app payload"
 cp -r "$WORK/dmg/$RES/app.asar" "$WORK/dmg/$RES/app.asar.unpacked" \
       "$WORK/dmg/$RES/icons" "$INSTALL_DIR/resources/"
 cp "$INSTALL_DIR/resources/icons/icon.png" "$INSTALL_DIR/granola-icon.png"
+
+# On Linux the tray uses iconTemplate*.png, black glyphs that macOS recolors to
+# fit the menu bar. Linux shows them as-is, which is invisible on dark panels
+# such as GNOME's, so make them white. Only the stdlib is available here, hence
+# the hand-rolled PNG decode (8-bit RGBA, non-interlaced, as Granola ships them).
+python3 - "$INSTALL_DIR"/resources/icons/iconTemplate*.png <<'PYEOF'
+import struct, sys, zlib
+
+def chunks(data):
+    pos = 8
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        yield kind, data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+
+def paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else b if pb <= pc else c
+
+def chunk(kind, body):
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+for path in sys.argv[1:]:
+    data = open(path, "rb").read()
+    parts = list(chunks(data))
+    w, h, depth, ctype, _, _, interlace = struct.unpack(">IIBBBBB", parts[0][1])
+    if (depth, ctype, interlace) != (8, 6, 0):
+        print(f"    skipped {path}: not 8-bit RGBA")
+        continue
+    raw = zlib.decompress(b"".join(body for kind, body in parts if kind == b"IDAT"))
+    stride, bpp = w * 4, 4
+    prev, out = bytearray(stride), bytearray()
+    for y in range(h):
+        ftype, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0
+            c = prev[x - bpp] if x >= bpp else 0
+            line[x] = (line[x] + (0, a, prev[x], (a + prev[x]) // 2, paeth(a, prev[x], c))[ftype]) & 0xFF
+        prev = line
+        out += b"\0" + bytes(v if i % 4 == 3 else 255 for i, v in enumerate(line))
+    idat = chunk(b"IDAT", zlib.compress(bytes(out), 9))
+    open(path, "wb").write(data[:8] + chunk(b"IHDR", parts[0][1]) + idat + chunk(b"IEND", b""))
+PYEOF
+
 "$SEVENZZ" e "$DMG" "Granola/Granola.app/Contents/Info.plist" -o"$WORK/appinfo" -y >/dev/null 2>&1 || true
 APP_VER="$(grep -A1 CFBundleShortVersionString "$WORK/appinfo/Info.plist" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 info "Granola ${APP_VER:-?} payload installed"
@@ -148,7 +198,7 @@ step "Installing launcher and desktop entry"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+exec "\$DIR/granola" --ozone-platform-hint=auto "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
@@ -174,7 +224,7 @@ command -v xdg-mime >/dev/null && xdg-mime default "$(basename "$DESKTOP_FILE")"
 step "Smoke-testing the native module"
 
 ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" \
-  "$INSTALL_DIR/electron" -e "
+  "$INSTALL_DIR/granola" -e "
     const Database = require('$BS3/lib/index.js');
     const db = new Database('$WORK/smoke.db');
     db.pragma(\"cipher='sqlcipher'\");

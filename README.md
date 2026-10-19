@@ -34,7 +34,7 @@ If you would rather not run the script, the conversion takes six steps:
 
 1. Extract the `.dmg` with a modern `7zz`. The `p7zip` in most distros cannot read its LZFSE compression.
 2. Read the Electron version out of `Electron Framework.framework/.../Info.plist`, then download that exact Linux build.
-3. Unzip the Linux runtime into your install folder and delete `resources/default_app.asar`.
+3. Unzip the Linux runtime into your install folder, delete `resources/default_app.asar`, and rename the `electron` binary (to `granola`, for example). Electron treats a binary named `electron` as an unpackaged development build, and Granola then looks for its tray icons in the wrong place.
 4. Copy `app.asar`, `app.asar.unpacked`, and `icons/` from the bundle into the runtime's `resources/`. Skip every Mac binary, since they all sit behind `darwin` checks.
 5. Patch the platform string inside `app.asar` so it reports `Windows`. Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this.
 6. Rebuild `better-sqlite3-multiple-ciphers` from the C++ source inside `app.asar.unpacked` using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has.
