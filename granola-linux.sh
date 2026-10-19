@@ -6,6 +6,7 @@ DMG="${1:-}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications/granola}"
 CACHE_DIR="${CACHE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.cache}"
 DESKTOP_FILE="${DESKTOP_FILE:-$HOME/.local/share/applications/granola.desktop}"
+APPARMOR_PROFILE=/etc/apparmor.d/granola
 RES="Granola/Granola.app/Contents/Resources"
 
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -169,6 +170,45 @@ EOF
 command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
 
 command -v xdg-mime >/dev/null && xdg-mime default "$(basename "$DESKTOP_FILE")" x-scheme-handler/granola 2>/dev/null || true
+
+
+# Ubuntu 23.10+ blocks unprivileged user namespaces through AppArmor. Chromium
+# then falls back to the setuid chrome-sandbox, which a non-root install cannot
+# provide, and aborts with "The SUID sandbox helper binary was found, but is
+# not configured correctly". Launches that inherit an already-permitted
+# environment (some IDE terminals) still work, so the failure typically shows
+# only when starting from the app menu. A named unconfined profile with the
+# userns permission is how Ubuntu itself handles Chrome and VS Code.
+USERNS_SYSCTL=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+if [[ "$(cat "$USERNS_SYSCTL" 2>/dev/null)" == 1 ]]; then
+  step "Allowing Chromium's sandbox under AppArmor"
+  cat > "$WORK/apparmor" <<EOF
+# Installed by granola-linux.sh. Lets Granola's Electron create user namespaces
+# for its sandbox; the app is otherwise unconfined.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile granola "$INSTALL_DIR/electron" flags=(unconfined) {
+  userns,
+
+  include if exists <local/granola>
+}
+EOF
+  if cmp -s "$WORK/apparmor" "$APPARMOR_PROFILE"; then
+    info "profile $APPARMOR_PROFILE is up to date"
+  else
+    info "installing $APPARMOR_PROFILE (needs sudo)"
+    if sudo install -m 644 "$WORK/apparmor" "$APPARMOR_PROFILE" \
+        && sudo apparmor_parser -r "$APPARMOR_PROFILE"; then
+      info "profile loaded"
+    else
+      cp "$WORK/apparmor" "$CACHE_DIR/granola.apparmor"
+      printf '\033[33mwarning:\033[0m could not install the AppArmor profile; Granola will not start from the app menu.\n' >&2
+      printf '    Install it manually:\n      sudo install -m 644 %q %q\n      sudo apparmor_parser -r %q\n' \
+        "$CACHE_DIR/granola.apparmor" "$APPARMOR_PROFILE" "$APPARMOR_PROFILE" >&2
+    fi
+  fi
+fi
 
 
 step "Smoke-testing the native module"
