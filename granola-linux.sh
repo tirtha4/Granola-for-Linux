@@ -56,6 +56,15 @@ step "Reading Electron version from the .dmg"
 "$SEVENZZ" e "$DMG" \
   "Granola/Granola.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist" \
   -o"$WORK/fw" -y >/dev/null || die "could not read the .dmg (is it a Granola disk image?)"
+# 7zz exits 0 when the requested path is not in the archive, so check the result.
+if [[ ! -f "$WORK/fw/Info.plist" ]]; then
+  # granola.ai/download serves a ~1 MB "Install Granola" stub that fetches the
+  # real app at first launch on macOS; it holds none of the app's files.
+  if "$SEVENZZ" l "$DMG" 2>/dev/null | grep -q "Install Granola.app"; then
+    die "$DMG is Granola's online stub installer, not the full app. Get the full .dmg (hundreds of MB, containing Granola.app) and re-run"
+  fi
+  die "Granola.app not found in $DMG (is it a Granola disk image?)"
+fi
 EL_VER="$(grep -A1 CFBundleVersion "$WORK/fw/Info.plist" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [[ -n "$EL_VER" ]] || die "could not determine the Electron version"
 info "Electron $EL_VER"
