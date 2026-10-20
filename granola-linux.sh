@@ -145,10 +145,14 @@ cp "$WORK/bs3/build/Release/better_sqlite3.node" \
 
 step "Installing launcher and desktop entry"
 
+# The meeting indicator's drag addon calls XQueryPointer and aborts the
+# process on Wayland. nub-drag.js replaces that call.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cp "$ROOT/packaging/linux/nub-drag.js" "$INSTALL_DIR/nub-drag.js"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+exec "\$DIR/electron" --require "\$DIR/nub-drag.js" --ozone-platform-hint=auto "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 

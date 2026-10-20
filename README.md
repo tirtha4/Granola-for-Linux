@@ -23,6 +23,7 @@ Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newe
 | ✅ | Sign-in with Google, Microsoft, or SSO |
 | ✅ | Encrypted local database that survives restarts |
 | ✅ | Microphone recording |
+| ✅ | Meeting indicator. Clicking or dragging it keeps the app open. |
 | ⚠️ | System audio capture is limited. The macOS build uses Core Audio to hear the other side of a call. On Linux the app falls back to a browser style capture path. |
 | ❌ | Apple Calendar (EventKit). Google and Microsoft calendars still work, since those run on the server. |
 | ❌ | Global hotkeys |
