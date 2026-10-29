@@ -200,7 +200,47 @@ if [[ "\$(stat -c '%u:%a' "\$DIR/chrome-sandbox" 2>/dev/null)" != "0:4755" ]]; t
   SANDBOX=(--no-sandbox)
 fi
 
-exec "\$DIR/electron" --ozone-platform-hint=auto "\${SANDBOX[@]}" "\$@"
+# Chromium's loopback capture lowers the default sink's monitor volume on
+# PipeWire, which makes the far side of a call nearly silent. Restore it while
+# Granola is running, using event-driven pactl when available and a light
+# wpctl/pw-cli poll otherwise.
+WATCHER_PID=""
+if command -v pactl >/dev/null 2>&1; then
+  (
+    pactl subscribe 2>/dev/null | while IFS= read -r event; do
+      case "\$event" in
+        *"on source-output"*)
+          sleep 0.5
+          sink="\$(pactl info 2>/dev/null | sed -n 's/^Default Sink: //p')"
+          [[ -n "\$sink" ]] && pactl set-source-volume "\$sink.monitor" 65536 >/dev/null 2>&1
+          ;;
+      esac
+    done
+  ) &
+  WATCHER_PID=\$!
+elif command -v wpctl >/dev/null 2>&1 && command -v pw-cli >/dev/null 2>&1; then
+  (
+    while sleep 1; do
+      id="\$(wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null | sed -n 's/^ *id \([0-9][0-9]*\),.*/\1/p' | head -1)"
+      [[ -n "\$id" ]] && pw-cli set-param "\$id" Props '{ monitorVolumes: [ 1.0, 1.0 ] }' >/dev/null 2>&1
+    done
+  ) &
+  WATCHER_PID=\$!
+fi
+
+"\$DIR/electron" --ozone-platform-hint=auto "\${SANDBOX[@]}" "\$@" &
+APP_PID=\$!
+
+cleanup() {
+  kill "\$APP_PID" 2>/dev/null
+  if [[ -n "\$WATCHER_PID" ]]; then
+    pkill -TERM -P "\$WATCHER_PID" 2>/dev/null
+    kill "\$WATCHER_PID" 2>/dev/null
+  fi
+}
+trap cleanup EXIT INT TERM
+
+wait "\$APP_PID"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
