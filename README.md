@@ -45,7 +45,7 @@ Four of those six fail with errors that do not point at the real cause. `granola
 
 - Nothing here gets around licensing or sign-in. You use your own account and the app talks to Granola's real servers. The only patches are a platform label their API refuses to accept and a Linux audio source selection that Granola gets wrong.
 - Granola's code belongs to Granola. Do not commit `app.asar` or the `.dmg`. The `.gitignore` covers both.
-- The script asks for sudo once to configure Electron's setuid sandbox helper (`chrome-sandbox`, root-owned mode 4755). Distributions that restrict unprivileged user namespaces, such as Ubuntu 23.10+ with AppArmor, need this or Electron refuses to start. If you skip the sudo step, the launcher falls back to `--no-sandbox`.
+- The script asks for administrator authentication once to configure Electron's setuid sandbox helper (`chrome-sandbox`, root-owned mode 4755). It uses `pkexec` when available, otherwise `sudo`. Distributions that restrict unprivileged user namespaces, such as Ubuntu 23.10+ with AppArmor, need this or Electron refuses to start.
 - System audio uses Chromium's loopback of the default output. Chromium lowers that monitor's capture volume on PipeWire, so the launcher watches for new capture streams and restores it while Granola runs (using `pactl`, or `wpctl`/`pw-cli` when `pactl` is not installed).
 - Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone.
 - `./uninstall.sh --purge` also removes the local notes cache and login.

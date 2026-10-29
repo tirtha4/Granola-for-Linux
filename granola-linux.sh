@@ -85,15 +85,19 @@ step "Configuring the Chromium sandbox"
 # Ubuntu 23.10+ with AppArmor) require Electron's setuid sandbox helper to be
 # root-owned and mode 4755. The zip stores it as a normal user file, and without
 # this the app aborts at startup with "The SUID sandbox helper binary was found,
-# but is not configured correctly". The launcher falls back to --no-sandbox if
-# this step is skipped or declined.
-if [[ "$(stat -c '%u:%a' "$INSTALL_DIR/chrome-sandbox" 2>/dev/null)" != "0:4755" ]]; then
-  if command -v sudo >/dev/null 2>&1 \
-     && sudo chown root:root "$INSTALL_DIR/chrome-sandbox" 2>/dev/null \
-     && sudo chmod 4755 "$INSTALL_DIR/chrome-sandbox" 2>/dev/null; then
-    info "sandbox helper installed (root:root 4755)"
+# but is not configured correctly". Use pkexec for the normal administrator
+# prompt; sudo covers installs where pkexec is unavailable.
+SANDBOX="$INSTALL_DIR/chrome-sandbox"
+if [[ "$(stat -c '%u:%g:%a' "$SANDBOX" 2>/dev/null)" != "0:0:4755" ]]; then
+  info "configuring Electron's sandbox helper (administrator authentication required)"
+  if command -v pkexec >/dev/null 2>&1; then
+    pkexec /bin/sh -c 'chown root:root "$1" && chmod 4755 "$1"' sh "$SANDBOX" \
+      || die "could not configure Electron's sandbox helper"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo chown root:root "$SANDBOX" && sudo chmod 4755 "$SANDBOX" \
+      || die "could not configure Electron's sandbox helper"
   else
-    info "sandbox helper not configured; the launcher will use --no-sandbox"
+    die "pkexec or sudo is required to configure Electron's sandbox helper"
   fi
 fi
 
@@ -192,14 +196,6 @@ cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 
-# Electron's setuid sandbox helper must be root-owned and mode 4755. Fall back
-# to --no-sandbox when it is not, otherwise Electron refuses to start on
-# distros that restrict unprivileged user namespaces.
-SANDBOX=()
-if [[ "\$(stat -c '%u:%a' "\$DIR/chrome-sandbox" 2>/dev/null)" != "0:4755" ]]; then
-  SANDBOX=(--no-sandbox)
-fi
-
 # Chromium's loopback capture lowers the default sink's monitor volume on
 # PipeWire, which makes the far side of a call nearly silent. Restore it while
 # Granola is running, using event-driven pactl when available and a light
@@ -228,7 +224,7 @@ elif command -v wpctl >/dev/null 2>&1 && command -v pw-cli >/dev/null 2>&1; then
   WATCHER_PID=\$!
 fi
 
-"\$DIR/electron" --ozone-platform-hint=auto "\${SANDBOX[@]}" "\$@" &
+"\$DIR/electron" --ozone-platform-hint=auto "\$@" &
 APP_PID=\$!
 
 cleanup() {
