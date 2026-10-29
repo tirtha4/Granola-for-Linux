@@ -79,6 +79,29 @@ chmod +x "$INSTALL_DIR/electron"
 rm -f "$INSTALL_DIR/resources/default_app.asar"   # the "welcome to Electron" demo
 
 
+step "Configuring the Chromium sandbox"
+
+# Distributions that restrict unprivileged user namespaces (for example,
+# Ubuntu 23.10+ with AppArmor) require Electron's setuid sandbox helper to be
+# root-owned and mode 4755. The zip stores it as a normal user file, and without
+# this the app aborts at startup with "The SUID sandbox helper binary was found,
+# but is not configured correctly". Use pkexec for the normal administrator
+# prompt; sudo covers installs where pkexec is unavailable.
+SANDBOX="$INSTALL_DIR/chrome-sandbox"
+if [[ "$(stat -c '%u:%g:%a' "$SANDBOX" 2>/dev/null)" != "0:0:4755" ]]; then
+  info "configuring Electron's sandbox helper (administrator authentication required)"
+  if command -v pkexec >/dev/null 2>&1; then
+    pkexec /bin/sh -c 'chown root:root "$1" && chmod 4755 "$1"' sh "$SANDBOX" \
+      || die "could not configure Electron's sandbox helper"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo chown root:root "$SANDBOX" && sudo chmod 4755 "$SANDBOX" \
+      || die "could not configure Electron's sandbox helper"
+  else
+    die "pkexec or sudo is required to configure Electron's sandbox helper"
+  fi
+fi
+
+
 step "Extracting the app payload"
 
 
@@ -116,6 +139,30 @@ print(f"    rewrote {total} platform fallback(s)")
 PYEOF
 
 
+step "Patching system audio capture"
+
+# On Linux Granola's setDisplayMediaRequestHandler asks Electron for a fake
+# source called "All loopback devices". Chromium accepts it and hands back a
+# live track, but the track is silent: the id does not point at any capture
+# device. Asking for "loopback" instead makes Chromium tap the default output
+# monitor, so the far side of the call is captured too.
+#
+# The same fake-source string is also used in the Windows branch above this
+# one; matching the leading colon keeps that branch untouched. The replacement
+# is padded to the same length because .asar stores file offsets.
+python3 - "$INSTALL_DIR/resources/app.asar" <<'PYEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); data = p.read_bytes()
+old = b':t({audio:{name:`All loopback devices`,id:`loopbackAllDevices`}})'
+new = b':t({audio:`loopback`})'
+found = data.count(old)
+if found != 1:
+    sys.exit(f"expected one Linux loopback fallback, found {found}. Granola's bundler output may have changed")
+p.write_bytes(data.replace(old, new.ljust(len(old))))
+print("    routed system audio through Chromium's loopback capture")
+PYEOF
+
+
 step "Rebuilding better-sqlite3-multiple-ciphers for Linux"
 
 # Granola ships a *patched* fork of better-sqlite3-multiple-ciphers: it adds an
@@ -148,7 +195,48 @@ step "Installing launcher and desktop entry"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+
+# Chromium's loopback capture lowers the default sink's monitor volume on
+# PipeWire, which makes the far side of a call nearly silent. Restore it while
+# Granola is running, using event-driven pactl when available and a light
+# wpctl/pw-cli poll otherwise.
+WATCHER_PID=""
+if command -v pactl >/dev/null 2>&1; then
+  (
+    pactl subscribe 2>/dev/null | while IFS= read -r event; do
+      case "\$event" in
+        *"on source-output"*)
+          sleep 0.5
+          sink="\$(pactl info 2>/dev/null | sed -n 's/^Default Sink: //p')"
+          [[ -n "\$sink" ]] && pactl set-source-volume "\$sink.monitor" 65536 >/dev/null 2>&1
+          ;;
+      esac
+    done
+  ) &
+  WATCHER_PID=\$!
+elif command -v wpctl >/dev/null 2>&1 && command -v pw-cli >/dev/null 2>&1; then
+  (
+    while sleep 1; do
+      id="\$(wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null | sed -n 's/^ *id \([0-9][0-9]*\),.*/\1/p' | head -1)"
+      [[ -n "\$id" ]] && pw-cli set-param "\$id" Props '{ monitorVolumes: [ 1.0, 1.0 ] }' >/dev/null 2>&1
+    done
+  ) &
+  WATCHER_PID=\$!
+fi
+
+"\$DIR/electron" --ozone-platform-hint=auto "\$@" &
+APP_PID=\$!
+
+cleanup() {
+  kill "\$APP_PID" 2>/dev/null
+  if [[ -n "\$WATCHER_PID" ]]; then
+    pkill -TERM -P "\$WATCHER_PID" 2>/dev/null
+    kill "\$WATCHER_PID" 2>/dev/null
+  fi
+}
+trap cleanup EXIT INT TERM
+
+wait "\$APP_PID"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 

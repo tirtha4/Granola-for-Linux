@@ -23,7 +23,7 @@ Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newe
 | ✅ | Sign-in with Google, Microsoft, or SSO |
 | ✅ | Encrypted local database that survives restarts |
 | ✅ | Microphone recording |
-| ⚠️ | System audio capture is limited. The macOS build uses Core Audio to hear the other side of a call. On Linux the app falls back to a browser style capture path. |
+| ✅ | System audio capture through Chromium's output loopback, so the other side of a call is transcribed too. |
 | ❌ | Apple Calendar (EventKit). Google and Microsoft calendars still work, since those run on the server. |
 | ❌ | Global hotkeys |
 | ❌ | Auto-update. Run the script again with a newer `.dmg`. |
@@ -36,14 +36,16 @@ If you would rather not run the script, the conversion takes six steps:
 2. Read the Electron version out of `Electron Framework.framework/.../Info.plist`, then download that exact Linux build.
 3. Unzip the Linux runtime into your install folder and delete `resources/default_app.asar`.
 4. Copy `app.asar`, `app.asar.unpacked`, and `icons/` from the bundle into the runtime's `resources/`. Skip every Mac binary, since they all sit behind `darwin` checks.
-5. Patch the platform string inside `app.asar` so it reports `Windows`. Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this.
+5. Patch `app.asar`: make the platform string report `Windows` (Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this) and switch the Linux display-media fallback from a silent fake loopback source to Chromium's real `loopback` capture.
 6. Rebuild `better-sqlite3-multiple-ciphers` from the C++ source inside `app.asar.unpacked` using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has.
 
 Four of those six fail with errors that do not point at the real cause. `granola-linux.sh` has the exact commands, with comments explaining each one.
 
 ## Notes
 
-- Nothing here gets around licensing or sign-in. You use your own account and the app talks to Granola's real servers. The only patch is a platform label that their API refuses to accept.
+- Nothing here gets around licensing or sign-in. You use your own account and the app talks to Granola's real servers. The only patches are a platform label their API refuses to accept and a Linux audio source selection that Granola gets wrong.
 - Granola's code belongs to Granola. Do not commit `app.asar` or the `.dmg`. The `.gitignore` covers both.
+- The script asks for administrator authentication once to configure Electron's setuid sandbox helper (`chrome-sandbox`, root-owned mode 4755). It uses `pkexec` when available, otherwise `sudo`. Distributions that restrict unprivileged user namespaces, such as Ubuntu 23.10+ with AppArmor, need this or Electron refuses to start.
+- System audio uses Chromium's loopback of the default output. Chromium lowers that monitor's capture volume on PipeWire, so the launcher watches for new capture streams and restores it while Granola runs (using `pactl`, or `wpctl`/`pw-cli` when `pactl` is not installed).
 - Running the script again is safe. It wipes and rebuilds the install folder and leaves your notes in `~/.config/Granola` alone.
 - `./uninstall.sh --purge` also removes the local notes cache and login.
