@@ -50,6 +50,9 @@ fi
 [[ -n "$CXX" ]] || die "need g++ 11 or newer (Electron 42 headers require C++20). Try: sudo apt install g++-11"
 info "compiler: $CXX ($($CXX -dumpversion))"
 
+NPM_VER="$(npm --version)"
+[[ "$(printf '%s\n' 11.10.0 "$NPM_VER" | sort -V | head -1)" == "11.10.0" ]] \
+  || die "npm $NPM_VER is too old for --min-release-age (need 11.10+)"
 
 step "Reading Electron version from the .dmg"
 
@@ -71,6 +74,10 @@ if [[ ! -f "$ZIP" ]]; then
 else
   info "using cached $(basename "$ZIP")"
 fi
+
+curl -fsSL "https://github.com/electron/electron/releases/download/v$EL_VER/SHASUMS256.txt" \
+  | grep " \*\?electron-v$EL_VER-linux-x64.zip$" \
+  | (cd "$CACHE_DIR" && sha256sum -c -) || die "Electron checksum mismatch"
 
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -134,7 +141,7 @@ cp -r "$BS3" "$WORK/bs3"
     && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch binding.gyp from npm"
 cp "$WORK/package/binding.gyp" "$WORK/bs3/"
 
-( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp rebuild --release \
+( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes --min-release-age=7 node-gyp rebuild --release \
     --runtime=electron --target="$EL_VER" --arch=x64 \
     --dist-url=https://electronjs.org/headers ) >"$WORK/build.log" 2>&1 \
   || { tail -30 "$WORK/build.log"; die "native build failed (full log: $WORK/build.log)"; }
