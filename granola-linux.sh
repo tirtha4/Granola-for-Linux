@@ -79,6 +79,25 @@ chmod +x "$INSTALL_DIR/electron"
 rm -f "$INSTALL_DIR/resources/default_app.asar"   # the "welcome to Electron" demo
 
 
+step "Configuring the Chromium sandbox"
+
+# Distributions that restrict unprivileged user namespaces (for example,
+# Ubuntu 23.10+ with AppArmor) require Electron's setuid sandbox helper to be
+# root-owned and mode 4755. The zip stores it as a normal user file, and without
+# this the app aborts at startup with "The SUID sandbox helper binary was found,
+# but is not configured correctly". The launcher falls back to --no-sandbox if
+# this step is skipped or declined.
+if [[ "$(stat -c '%u:%a' "$INSTALL_DIR/chrome-sandbox" 2>/dev/null)" != "0:4755" ]]; then
+  if command -v sudo >/dev/null 2>&1 \
+     && sudo chown root:root "$INSTALL_DIR/chrome-sandbox" 2>/dev/null \
+     && sudo chmod 4755 "$INSTALL_DIR/chrome-sandbox" 2>/dev/null; then
+    info "sandbox helper installed (root:root 4755)"
+  else
+    info "sandbox helper not configured; the launcher will use --no-sandbox"
+  fi
+fi
+
+
 step "Extracting the app payload"
 
 
@@ -172,7 +191,16 @@ step "Installing launcher and desktop entry"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+
+# Electron's setuid sandbox helper must be root-owned and mode 4755. Fall back
+# to --no-sandbox when it is not, otherwise Electron refuses to start on
+# distros that restrict unprivileged user namespaces.
+SANDBOX=()
+if [[ "\$(stat -c '%u:%a' "\$DIR/chrome-sandbox" 2>/dev/null)" != "0:4755" ]]; then
+  SANDBOX=(--no-sandbox)
+fi
+
+exec "\$DIR/electron" --ozone-platform-hint=auto "\${SANDBOX[@]}" "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
