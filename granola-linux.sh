@@ -116,6 +116,30 @@ print(f"    rewrote {total} platform fallback(s)")
 PYEOF
 
 
+step "Patching system audio capture"
+
+# On Linux Granola's setDisplayMediaRequestHandler asks Electron for a fake
+# source called "All loopback devices". Chromium accepts it and hands back a
+# live track, but the track is silent: the id does not point at any capture
+# device. Asking for "loopback" instead makes Chromium tap the default output
+# monitor, so the far side of the call is captured too.
+#
+# The same fake-source string is also used in the Windows branch above this
+# one; matching the leading colon keeps that branch untouched. The replacement
+# is padded to the same length because .asar stores file offsets.
+python3 - "$INSTALL_DIR/resources/app.asar" <<'PYEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); data = p.read_bytes()
+old = b':t({audio:{name:`All loopback devices`,id:`loopbackAllDevices`}})'
+new = b':t({audio:`loopback`})'
+found = data.count(old)
+if found != 1:
+    sys.exit(f"expected one Linux loopback fallback, found {found}. Granola's bundler output may have changed")
+p.write_bytes(data.replace(old, new.ljust(len(old))))
+print("    routed system audio through Chromium's loopback capture")
+PYEOF
+
+
 step "Rebuilding better-sqlite3-multiple-ciphers for Linux"
 
 # Granola ships a *patched* fork of better-sqlite3-multiple-ciphers: it adds an
