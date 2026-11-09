@@ -37,7 +37,7 @@ If you would rather not run the script, the conversion takes six steps:
 3. Unzip the Linux runtime into your install folder and delete `resources/default_app.asar`.
 4. Copy `app.asar`, `app.asar.unpacked`, and `icons/` from the bundle into the runtime's `resources/`. Skip every Mac binary, since they all sit behind `darwin` checks.
 5. Patch the platform string inside `app.asar` so it reports `Windows`. Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this.
-6. Rebuild `better-sqlite3-multiple-ciphers` from the C++ source inside `app.asar.unpacked` using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has.
+6. Rebuild `better-sqlite3-multiple-ciphers` for Linux using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has. Older Granola releases shipped that C++ source in `app.asar.unpacked`. Since 7.749 they ship only the Mac binary, so the script patches the matching npm release with [`patches/`](patches/) instead.
 
 Four of those six fail with errors that do not point at the real cause. `granola-linux.sh` has the exact commands, with comments explaining each one.
 

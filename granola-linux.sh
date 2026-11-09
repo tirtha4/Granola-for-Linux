@@ -51,6 +51,25 @@ fi
 info "compiler: $CXX ($($CXX -dumpversion))"
 
 
+# granola.ai/download now serves a ~1 MB "Install Granola.app" that downloads
+# the real app at install time. It has no app.asar, so fetch the full .dmg the
+# same way that stub does: ask the versions API, then follow download.granola.ai.
+if "$SEVENZZ" l "$DMG" 2>/dev/null | grep -q 'Install Granola.app/Contents/MacOS/GranolaInstaller'; then
+  step "Fetching the full Granola .dmg"
+  info "$(basename "$DMG") is Granola's downloader stub, not the app itself"
+  VER="$(curl -fsS https://api.granola.ai/v1/get-versions | grep -oE '"download":"[0-9.]+"' | grep -oE '[0-9.]+')" \
+    || die "could not ask api.granola.ai for the latest version"
+  DMG="$CACHE_DIR/Granola-$VER-mac-universal.dmg"
+  if [[ ! -f "$DMG" ]]; then
+    info "downloading Granola $VER"
+    curl -fL --progress-bar -o "$DMG.part" "https://download.granola.ai/?platform=mac&version=$VER" \
+      || die "download failed"
+    mv "$DMG.part" "$DMG"
+  else
+    info "using cached $(basename "$DMG")"
+  fi
+fi
+
 step "Reading Electron version from the .dmg"
 
 "$SEVENZZ" e "$DMG" \
@@ -123,16 +142,29 @@ step "Rebuilding better-sqlite3-multiple-ciphers for Linux"
 # npm builds do not have it, so dropping in a stock prebuilt binary gets you a
 # window that dies with "r.updateHook is not a function".
 #
-# Their full C++ source is inside app.asar.unpacked, so build *that*. Only
-# binding.gyp is missing from the bundle; take it from the matching npm release.
+# Granola up to 7.668 shipped the fork's full C++ source inside
+# app.asar.unpacked (missing only binding.gyp), so we built that. From 7.749 on
+# the bundle has just the compiled macOS binary and lib/*.js. In that case,
+# rebuild the fork from the matching npm release plus the patch in patches/,
+# which was taken from Granola's last source-bearing bundle.
 BS3="$INSTALL_DIR/resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers"
 BS3_VER="$(node -p "require('$BS3/package.json').version")"
-info "building Granola's fork of v$BS3_VER from source"
+BS3_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/better-sqlite3-multiple-ciphers-$BS3_VER.patch"
 
-cp -r "$BS3" "$WORK/bs3"
 ( cd "$WORK" && npm pack "better-sqlite3-multiple-ciphers@$BS3_VER" --silent >/dev/null \
-    && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch binding.gyp from npm"
-cp "$WORK/package/binding.gyp" "$WORK/bs3/"
+    && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch v$BS3_VER from npm"
+
+if [[ -d "$BS3/src" ]]; then
+  info "building Granola's bundled fork of v$BS3_VER from source"
+  cp -r "$BS3" "$WORK/bs3"
+  cp "$WORK/package/binding.gyp" "$WORK/bs3/"
+else
+  info "bundle has no C++ source; patching upstream v$BS3_VER with updateHook support"
+  [[ -f "$BS3_PATCH" ]] || die "no patch for better-sqlite3-multiple-ciphers v$BS3_VER (expected $BS3_PATCH)"
+  command -v patch >/dev/null || die "'patch' not found. Please install it."
+  mv "$WORK/package" "$WORK/bs3"
+  patch -d "$WORK/bs3" -p1 --quiet <"$BS3_PATCH" || die "could not apply $(basename "$BS3_PATCH")"
+fi
 
 ( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp rebuild --release \
     --runtime=electron --target="$EL_VER" --arch=x64 \
@@ -143,12 +175,28 @@ cp "$WORK/bs3/build/Release/better_sqlite3.node" \
    "$WORK/bs3/build/Release/test_extension.node" "$BS3/build/Release/"
 
 
+step "Setting up the Chromium sandbox"
+
+# Ubuntu 23.10+ blocks unprivileged user namespaces through AppArmor, so
+# Electron falls back to the setuid chrome-sandbox helper and aborts at launch
+# unless that helper is root-owned with mode 4755.
+if [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" == 1 ]]; then
+  info "unprivileged user namespaces are restricted; chrome-sandbox needs to be setuid root (sudo)"
+  sudo chown root:root "$INSTALL_DIR/chrome-sandbox" && sudo chmod 4755 "$INSTALL_DIR/chrome-sandbox" \
+    || die "could not set up chrome-sandbox. Run: sudo chown root:root $INSTALL_DIR/chrome-sandbox && sudo chmod 4755 $INSTALL_DIR/chrome-sandbox"
+else
+  info "user namespaces available, nothing to do"
+fi
+
+
 step "Installing launcher and desktop entry"
 
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto "\$@"
+# Native Wayland segfaults on startup (Electron 44 / Granola 7.668), so run
+# through XWayland. Harmless on X11 sessions.
+exec "\$DIR/electron" --ozone-platform=x11 "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
