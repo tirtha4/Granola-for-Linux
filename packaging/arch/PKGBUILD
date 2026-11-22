@@ -43,6 +43,7 @@ source=(
   "https://registry.npmjs.org/better-sqlite3-multiple-ciphers/-/better-sqlite3-multiple-ciphers-$_bs3ver.tgz"
   "https://electronjs.org/headers/v$_elver/node-v$_elver-headers.tar.gz"
   "granola.desktop"
+  "nub-drag.js"
 )
 noextract=(
   "granola-$pkgver.dmg"
@@ -51,7 +52,8 @@ noextract=(
 sha256sums=('29fabbacdbad860be46e434b39fdbbf424982affed39f93e0e47899532784b73'
             'ad8ceb2cfe687e0c106547fdd281f0d20b40688200d04f40bb163afd1f102609'
             'ce3ef7604c6a19f6c8e018a771919cacf4a85cea56ddfaa850335908fea83377'
-            '20c443a00fcba28a00292aab36eda376af28e2b6d2f63e083221edc1af7e3f18')
+            '20c443a00fcba28a00292aab36eda376af28e2b6d2f63e083221edc1af7e3f18'
+            '31436c2e54cd5a08e7da346f629137571218006a4c674224853aac2bc51d6c1a')
 
 _res="Granola/Granola.app/Contents/Resources"
 _bs3rel="app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers"
@@ -159,14 +161,18 @@ package() {
   # is the lime squircle Granola actually ships.
   if [[ -f "payload/$_res/icons/mac-icon.png" ]]; then
     install -Dm644 "payload/$_res/icons/mac-icon.png" "$pkgdir/usr/share/pixmaps/granola.png"
+    # nub-drag.js reads this when the tray asks for iconTemplate.png.
+    install -Dm644 "payload/$_res/icons/mac-icon.png" "$pkgdir/usr/lib/granola/granola-icon.png"
   else
     install -Dm644 "payload/$_res/icons/icon.png" "$pkgdir/usr/share/pixmaps/granola.png"
   fi
   install -Dm644 granola.desktop "$pkgdir/usr/share/applications/granola.desktop"
+  # Stops the meeting nub from aborting the process when it is clicked or dragged.
+  install -Dm644 nub-drag.js "$pkgdir/usr/lib/granola/nub-drag.js"
 
   install -Dm755 /dev/stdin "$pkgdir/usr/bin/granola" <<EOF
 #!/bin/sh
-exec /usr/lib/$_electron/electron --ozone-platform-hint=auto --enable-features=WebRTCPipeWireCapturer /usr/lib/granola/app.asar "\$@"
+exec /usr/lib/$_electron/electron --require /usr/lib/granola/nub-drag.js --ozone-platform-hint=auto --enable-features=WebRTCPipeWireCapturer /usr/lib/granola/app.asar "\$@"
 EOF
 
   install -Dm644 /dev/stdin "$pkgdir/usr/share/licenses/$pkgname/LICENSE" <<EOF

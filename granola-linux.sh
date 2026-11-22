@@ -125,6 +125,11 @@ cp -r "$WORK/dmg/$RES/app.asar" "$WORK/dmg/$RES/app.asar.unpacked" \
 ICON_SRC="$INSTALL_DIR/resources/icons/mac-icon.png"
 [[ -f "$ICON_SRC" ]] || ICON_SRC="$INSTALL_DIR/resources/icons/icon.png"
 cp "$ICON_SRC" "$INSTALL_DIR/granola-icon.png"
+# The tray loads iconTemplate.png, the macOS menu-bar template. Put the
+# app icon there so the bar shows the same mark as the launcher.
+if [[ -f "$INSTALL_DIR/resources/icons/mac-icon.png" ]]; then
+  cp "$INSTALL_DIR/resources/icons/mac-icon.png" "$INSTALL_DIR/resources/icons/iconTemplate.png"
+fi
 "$SEVENZZ" e "$DMG" "Granola/Granola.app/Contents/Info.plist" -o"$WORK/appinfo" -y >/dev/null 2>&1 || true
 APP_VER="$(grep -A1 CFBundleShortVersionString "$WORK/appinfo/Info.plist" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
 info "Granola ${APP_VER:-?} payload installed"
@@ -187,10 +192,14 @@ step "Installing launcher and desktop entry"
 # WebRTCPipeWireCapturer is the Linux stand-in for the macOS Core Audio tap:
 # without it, meeting capture falls back to a browser-style picker that does
 # not work on a lot of compositors.
+# nub-drag.js replaces the X11 click-drag addon. On Wayland that addon aborts
+# the process on the first click of the meeting indicator.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cp "$ROOT/packaging/linux/nub-drag.js" "$INSTALL_DIR/nub-drag.js"
 cat > "$INSTALL_DIR/granola.sh" <<EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/electron" --ozone-platform-hint=auto --enable-features=WebRTCPipeWireCapturer "\$@"
+exec "\$DIR/electron" --require "\$DIR/nub-drag.js" --ozone-platform-hint=auto --enable-features=WebRTCPipeWireCapturer "\$@"
 EOF
 chmod +x "$INSTALL_DIR/granola.sh"
 
