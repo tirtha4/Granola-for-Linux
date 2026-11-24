@@ -21,7 +21,7 @@ mkdir -p "$CACHE_DIR"
 
 step "Checking prerequisites"
 
-for cmd in node npm python3 curl make; do
+for cmd in node npm python3 curl make git; do
   command -v "$cmd" >/dev/null || die "'$cmd' not found. Please install it."
 done
 
@@ -123,24 +123,43 @@ step "Rebuilding better-sqlite3-multiple-ciphers for Linux"
 # npm builds do not have it, so dropping in a stock prebuilt binary gets you a
 # window that dies with "r.updateHook is not a function".
 #
-# Their full C++ source is inside app.asar.unpacked, so build *that*. Only
-# binding.gyp is missing from the bundle; take it from the matching npm release.
+# Older Granola releases shipped their fork's C++ source inside
+# app.asar.unpacked, so we built that. Newer ones (seen with 7.821.0) ship only
+# the macOS binary. In that case, build the matching npm release with
+# patches/bs3-update-hook.patch, which re-implements updateHook() on top of
+# sqlite3_update_hook. Granola's own lib/*.js is kept; only the .node changes.
 BS3="$INSTALL_DIR/resources/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers"
 BS3_VER="$(node -p "require('$BS3/package.json').version")"
-info "building Granola's fork of v$BS3_VER from source"
+PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches"
 
-cp -r "$BS3" "$WORK/bs3"
 ( cd "$WORK" && npm pack "better-sqlite3-multiple-ciphers@$BS3_VER" --silent >/dev/null \
-    && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch binding.gyp from npm"
-cp "$WORK/package/binding.gyp" "$WORK/bs3/"
+    && tar xzf better-sqlite3-multiple-ciphers-*.tgz ) || die "could not fetch v$BS3_VER from npm"
+
+if [[ -d "$BS3/src" ]]; then
+  info "building Granola's bundled fork of v$BS3_VER from source"
+  cp -r "$BS3" "$WORK/bs3"
+  cp "$WORK/package/binding.gyp" "$WORK/bs3/"
+  [[ -d "$BS3/deps" ]] || cp -r "$WORK/package/deps" "$WORK/bs3/"
+else
+  # bs3-v8-15-compat.patch: upstream 12.9.0 does not compile against V8 15
+  # (Electron 45+), which renamed HolderV2/GetPrototypeV2 back and added
+  # type tags to v8::External.
+  info "no bundled source; building npm v$BS3_VER + local patches"
+  cp -r "$WORK/package" "$WORK/bs3"
+  for p in "$PATCH_DIR"/bs3-*.patch; do
+    ( cd "$WORK/bs3" && git apply --whitespace=nowarn "$p" ) \
+      || die "$(basename "$p") does not apply to v$BS3_VER"
+  done
+fi
 
 ( cd "$WORK/bs3" && CC="$CC" CXX="$CXX" npx --yes node-gyp rebuild --release \
     --runtime=electron --target="$EL_VER" --arch=x64 \
     --dist-url=https://electronjs.org/headers ) >"$WORK/build.log" 2>&1 \
   || { tail -30 "$WORK/build.log"; die "native build failed (full log: $WORK/build.log)"; }
 
-cp "$WORK/bs3/build/Release/better_sqlite3.node" \
-   "$WORK/bs3/build/Release/test_extension.node" "$BS3/build/Release/"
+cp "$WORK/bs3/build/Release/better_sqlite3.node" "$BS3/build/Release/"
+[[ -f "$WORK/bs3/build/Release/test_extension.node" ]] \
+  && cp "$WORK/bs3/build/Release/test_extension.node" "$BS3/build/Release/"
 
 
 step "Installing launcher and desktop entry"
@@ -181,7 +200,7 @@ ELECTRON_RUN_AS_NODE=1 NODE_PATH="$INSTALL_DIR/resources/app.asar/node_modules" 
     db.pragma(\"key='smoketest'\");
     db.exec('CREATE TABLE t(a)');
     let fired = false;
-    db.updateHook(() => { fired = true; });
+    db.updateHook((op, dbName, table) => { fired = op === 'insert' && table === 't'; });
     db.prepare('INSERT INTO t VALUES (1)').run();
     if (db.prepare('SELECT count(*) c FROM t').get().c !== 1) throw new Error('insert failed');
     if (!fired) throw new Error('updateHook did not fire');

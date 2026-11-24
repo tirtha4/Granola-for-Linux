@@ -1,0 +1,19 @@
+diff -ru dfo/deps/defines.gypi dfm/deps/defines.gypi
+--- a/deps/defines.gypi	2026-11-24 23:13:32.367963666 +1100
++++ b/deps/defines.gypi	2026-11-24 23:14:43.957831523 +1100
+@@ -15,6 +15,7 @@
+     'SQLITE_DEFAULT_MEMSTATUS=0',
+     'SQLITE_DEFAULT_WAL_SYNCHRONOUS=1',
+     'SQLITE_DQS=0',
++    'SQLITE_ENABLE_BYTECODE_VTAB',
+     'SQLITE_ENABLE_COLUMN_METADATA',
+     'SQLITE_ENABLE_DBSTAT_VTAB',
+     'SQLITE_ENABLE_DESERIALIZE',
+@@ -37,6 +38,6 @@
+     'SQLITE_THREADSAFE=2',
+     'SQLITE_TRACE_SIZE_LIMIT=32',
+     'SQLITE_USER_AUTHENTICATION=0',
+-    'SQLITE_USE_URI=0',
++    'SQLITE_USE_URI=1',
+   ],
+ }

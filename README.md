@@ -7,13 +7,13 @@
 ## Run it
 
 1. Download the `.dmg` from [granola.ai/download](https://www.granola.ai/download)
-2. Install what you need: `sudo apt install g++-11 nodejs npm python3 curl make`
+2. Install what you need: `sudo apt install g++-11 nodejs npm python3 curl make git`
 3. Run `./granola-linux.sh "Granola - AI Notepad.dmg"`
 4. Open Granola from your app menu and sign in
 
 That is it. The script installs to `~/Applications/granola`, adds a desktop entry, registers the `granola://` sign-in handler, and tests the build before it tells you it worked. Run `./uninstall.sh` to undo it.
 
-Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer. Tested on Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) with Granola 7.452.1 and Electron 42.7.0.
+Set `INSTALL_DIR=` to install somewhere else. You need x86-64 and g++ 11 or newer. Tested on Pop!\_OS (Ubuntu 20.04 base, glibc 2.32) with Granola 7.452.1 and Electron 42.7.0, and on Fedora 44 with Granola 7.821.0 and Electron 45.2.3.
 
 ## What works
 
@@ -37,7 +37,7 @@ If you would rather not run the script, the conversion takes six steps:
 3. Unzip the Linux runtime into your install folder and delete `resources/default_app.asar`.
 4. Copy `app.asar`, `app.asar.unpacked`, and `icons/` from the bundle into the runtime's `resources/`. Skip every Mac binary, since they all sit behind `darwin` checks.
 5. Patch the platform string inside `app.asar` so it reports `Windows`. Granola's API returns a 500 error for `platform=linux`, so sign-in fails without this.
-6. Rebuild `better-sqlite3-multiple-ciphers` from the C++ source inside `app.asar.unpacked` using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has.
+6. Rebuild `better-sqlite3-multiple-ciphers` for Linux using g++ 11 or newer. Granola's version adds an `updateHook()` that no public build has. Older Granola releases shipped that C++ source in `app.asar.unpacked`. Newer ones (7.749 and later) ship only the Mac binary, so the script builds the matching npm release with the patches in [`patches/`](patches/): `updateHook()`, V8 15 API fixes for Electron 45, and the two SQLite options Granola's build adds (`ENABLE_BYTECODE_VTAB` for `tables_used()`, and `USE_URI`).
 
 Four of those six fail with errors that do not point at the real cause. `granola-linux.sh` has the exact commands, with comments explaining each one.
 

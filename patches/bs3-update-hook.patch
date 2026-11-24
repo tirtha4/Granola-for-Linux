@@ -1,0 +1,91 @@
+diff -ru a/src/objects/database.cpp b/src/objects/database.cpp
+--- a/src/objects/database.cpp	2026-11-24 23:05:01.415268077 +1100
++++ b/src/objects/database.cpp	2026-11-24 23:05:01.446658308 +1100
+@@ -28,7 +28,8 @@
+ 	addon(addon),
+ 	logger(isolate, logger),
+ 	stmts(),
+-	backups() {
++	backups(),
++	update_hook() {
+ 	assert(db_handle != NULL);
+ 	addon->dbs.insert(this);
+ }
+@@ -46,6 +47,8 @@
+ 		for (Backup* backup : backups) backup->CloseHandles();
+ 		stmts.clear();
+ 		backups.clear();
++		sqlite3_update_hook(db_handle, NULL, NULL);
++		update_hook.Reset();
+ 		int status = sqlite3_close(db_handle);
+ 		assert(status == SQLITE_OK); ((void)status);
+ 	}
+@@ -135,6 +138,7 @@
+ 	SetPrototypeMethod(isolate, data, t, "aggregate", JS_aggregate);
+ 	SetPrototypeMethod(isolate, data, t, "table", JS_table);
+ 	SetPrototypeMethod(isolate, data, t, "loadExtension", JS_loadExtension);
++	SetPrototypeMethod(isolate, data, t, "updateHook", JS_updateHook);
+ 	SetPrototypeMethod(isolate, data, t, "close", JS_close);
+ 	SetPrototypeMethod(isolate, data, t, "defaultSafeIntegers", JS_defaultSafeIntegers);
+ 	SetPrototypeMethod(isolate, data, t, "unsafeMode", JS_unsafeMode);
+@@ -447,6 +451,42 @@
+ 	sqlite3_db_config(db->db_handle, SQLITE_DBCONFIG_DEFENSIVE, static_cast<int>(!db->unsafe_mode), NULL);
+ }
+ 
++// Granola-compatible updateHook(fn | null). Calls fn(op, dbName, table, rowid)
++// after each row change, where op is "insert", "update" or "delete".
++// Passing null or undefined removes the hook.
++NODE_METHOD(Database::JS_updateHook) {
++	Database* db = Unwrap<Database>(info.This());
++	if (!db->open) return ThrowTypeError("The database connection is not open");
++	UseIsolate;
++	if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
++		sqlite3_update_hook(db->db_handle, NULL, NULL);
++		db->update_hook.Reset();
++		return;
++	}
++	if (!info[0]->IsFunction()) return ThrowTypeError("Expected first argument to be a function");
++	db->update_hook.Reset(isolate, info[0].As<v8::Function>());
++	sqlite3_update_hook(db->db_handle, UpdateHookCallback, db);
++}
++
++void Database::UpdateHookCallback(void* self, int op, const char* db_name, const char* table, sqlite3_int64 rowid) {
++	Database* db = static_cast<Database*>(self);
++	if (db->update_hook.IsEmpty()) return;
++	v8::Isolate* isolate = v8::Isolate::GetCurrent();
++	v8::HandleScope scope(isolate);
++	v8::Local<v8::Context> ctx = isolate->GetCurrentContext();
++	const char* op_name = op == SQLITE_INSERT ? "insert" : op == SQLITE_DELETE ? "delete" : "update";
++	v8::Local<v8::Value> args[4] = {
++		StringFromUtf8(isolate, op_name, -1),
++		StringFromUtf8(isolate, db_name, -1),
++		StringFromUtf8(isolate, table, -1),
++		v8::Number::New(isolate, static_cast<double>(rowid))
++	};
++	// The hook runs inside sqlite3_step, where a JS exception cannot propagate
++	// safely, so errors thrown by the callback are swallowed.
++	v8::TryCatch try_catch(isolate);
++	(void)db->update_hook.Get(isolate)->Call(ctx, v8::Undefined(isolate), 4, args);
++}
++
+ NODE_GETTER(Database::JS_open) {
+ 	info.GetReturnValue().Set(Unwrap<Database>(PROPERTY_HOLDER(info))->open);
+ }
+diff -ru a/src/objects/database.hpp b/src/objects/database.hpp
+--- a/src/objects/database.hpp	2026-11-24 23:05:01.415375098 +1100
++++ b/src/objects/database.hpp	2026-11-24 23:05:10.139335779 +1100
+@@ -81,6 +81,8 @@
+ 	static NODE_METHOD(JS_close);
+ 	static NODE_METHOD(JS_defaultSafeIntegers);
+ 	static NODE_METHOD(JS_unsafeMode);
++	static NODE_METHOD(JS_updateHook);
++	static void UpdateHookCallback(void* self, int op, const char* db_name, const char* table, sqlite3_int64 rowid);
+ 	static NODE_GETTER(JS_open);
+ 	static NODE_GETTER(JS_inTransaction);
+ 
+@@ -102,4 +104,5 @@
+ 	const v8::Global<v8::Value> logger;
+ 	std::set<Statement*, CompareStatement> stmts;
+ 	std::set<Backup*, CompareBackup> backups;
++	v8::Global<v8::Function> update_hook;
+ };
