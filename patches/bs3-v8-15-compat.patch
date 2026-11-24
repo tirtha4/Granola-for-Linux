@@ -1,0 +1,55 @@
+diff -ru v8o/src/better_sqlite3.cpp v8m/src/better_sqlite3.cpp
+--- a/src/better_sqlite3.cpp	2026-11-24 23:08:31.026604575 +1100
++++ b/src/better_sqlite3.cpp	2026-11-24 23:09:41.486040718 +1100
+@@ -57,7 +57,7 @@
+ 
+ 	// Initialize addon instance.
+ 	Addon* addon = new Addon(isolate);
+-	v8::Local<v8::External> data = v8::External::New(isolate, addon);
++	v8::Local<v8::External> data = v8::External::New(isolate, addon EXTERNAL_NEW_TAG);
+ 	node::AddEnvironmentCleanupHook(isolate, Addon::Cleanup, addon);
+ 
+ 	// Create and export native-backed classes and functions.
+diff -ru v8o/src/util/macros.cpp v8m/src/util/macros.cpp
+--- a/src/util/macros.cpp	2026-11-24 23:08:31.024724739 +1100
++++ b/src/util/macros.cpp	2026-11-24 23:09:41.485982272 +1100
+@@ -4,7 +4,11 @@
+ #define NODE_GETTER(name) void name(v8::Local<v8::Name> _, const v8::PropertyCallbackInfo<v8::Value>& info)
+ #define INIT(name) v8::Local<v8::Function> name(v8::Isolate* isolate, v8::Local<v8::External> data)
+ 
+-#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 13
++// V8 15 (Electron 45) restored GetPrototype() and Holder(), removed the V2
++// names, and made v8::External take an ExternalPointerTypeTag.
++#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 15
++#define GET_PROTOTYPE(obj) ((obj)->GetPrototype())
++#elif defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 13
+ // v8::Object::GetPrototype has been deprecated. See http://crbug.com/333672197
+ #define GET_PROTOTYPE(obj) ((obj)->GetPrototypeV2())
+ #else
+@@ -18,7 +22,9 @@
+ //   V8_INLINE Local<Object> Holder() const;
+ //   V8_DEPRECATE_SOON("Use Holder().")
+ //   V8_INLINE Local<Object> HolderV2() const;
+-#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 13
++#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 15
++#define PROPERTY_HOLDER(info) (info).Holder()
++#elif defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 13
+ #define PROPERTY_HOLDER(info) (info).HolderV2()
+ #else
+ #define PROPERTY_HOLDER(info) (info).This()
+@@ -27,7 +33,14 @@
+ #define EasyIsolate v8::Isolate* isolate = v8::Isolate::GetCurrent()
+ #define OnlyIsolate info.GetIsolate()
+ #define OnlyContext isolate->GetCurrentContext()
+-#define OnlyAddon static_cast<Addon*>(info.Data().As<v8::External>()->Value())
++#if defined(V8_MAJOR_VERSION) && V8_MAJOR_VERSION >= 15
++#define EXTERNAL_TAG v8::kExternalPointerTypeTagDefault
++#define EXTERNAL_NEW_TAG , EXTERNAL_TAG
++#else
++#define EXTERNAL_TAG
++#define EXTERNAL_NEW_TAG
++#endif
++#define OnlyAddon static_cast<Addon*>(info.Data().As<v8::External>()->Value(EXTERNAL_TAG))
+ #define UseIsolate v8::Isolate* isolate = OnlyIsolate
+ #define UseContext v8::Local<v8::Context> ctx = OnlyContext
+ #define UseAddon Addon* addon = OnlyAddon
