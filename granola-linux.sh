@@ -7,6 +7,9 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/Applications/granola}"
 CACHE_DIR="${CACHE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.cache}"
 DESKTOP_FILE="${DESKTOP_FILE:-$HOME/.local/share/applications/granola.desktop}"
 RES="Granola/Granola.app/Contents/Resources"
+# Undocumented endpoint (linked from the stub installer) that redirects to the
+# latest full universal .dmg.
+FULL_DMG_URL="https://api.granola.ai/v1/download-latest?full_dmg=true"
 
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1;36m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
@@ -56,6 +59,16 @@ step "Reading Electron version from the .dmg"
 "$SEVENZZ" e "$DMG" \
   "Granola/Granola.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist" \
   -o"$WORK/fw" -y >/dev/null || die "could not read the .dmg (is it a Granola disk image?)"
+# 7zz exits 0 when the requested path is not in the archive, so check the result.
+if [[ ! -f "$WORK/fw/Info.plist" ]]; then
+  # granola.ai/download serves a ~1 MB "Install Granola" stub that fetches the
+  # real app at first launch on macOS; it holds none of the app's files.
+  if "$SEVENZZ" l "$DMG" 2>/dev/null | grep -q "Install Granola.app"; then
+    die "$DMG is Granola's online stub installer, not the full app. Download the full .dmg (hundreds of MB, containing Granola.app) and re-run:
+      curl -fL -o Granola.dmg '$FULL_DMG_URL'"
+  fi
+  die "Granola.app not found in $DMG (is it a Granola disk image?)"
+fi
 EL_VER="$(grep -A1 CFBundleVersion "$WORK/fw/Info.plist" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [[ -n "$EL_VER" ]] || die "could not determine the Electron version"
 info "Electron $EL_VER"

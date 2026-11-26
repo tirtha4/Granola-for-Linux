@@ -6,9 +6,10 @@
 
 ## Run it
 
-1. Download the `.dmg` from [granola.ai/download](https://www.granola.ai/download)
+1. Download the full macOS `.dmg`: `curl -fL -o Granola.dmg 'https://api.granola.ai/v1/download-latest?full_dmg=true'`
+   The installer from [granola.ai/download](https://www.granola.ai/download) is a ~1 MB stub that fetches the app at first launch on macOS, so it does not contain the app.
 2. Install what you need: `sudo apt install g++-11 nodejs npm python3 curl make`
-3. Run `./granola-linux.sh "Granola - AI Notepad.dmg"`
+3. Run `./granola-linux.sh Granola.dmg`
 4. Open Granola from your app menu and sign in
 
 That is it. The script installs to `~/Applications/granola`, adds a desktop entry, registers the `granola://` sign-in handler, and tests the build before it tells you it worked. Run `./uninstall.sh` to undo it.
